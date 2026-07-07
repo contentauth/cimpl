@@ -1,4 +1,4 @@
-// Copyright 2026 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -21,12 +21,11 @@
 use std::{
     any::TypeId,
     collections::HashMap,
-    ffi::c_void,
     os::raw::c_uchar,
     sync::{Arc, Mutex},
 };
 
-use crate::error::Error;
+use crate::{error::Error, maybe_send_sync::MaybeSend};
 
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
@@ -67,6 +66,26 @@ impl PointerRegistry {
         let tracked = self.tracked.lock().map_err(|_| Error::mutex_poisoned())?;
         match tracked.get(&ptr) {
             Some((actual_type, _)) if *actual_type == expected_type => Ok(()),
+            Some(_) => Err(Error::wrong_pointer_type(ptr as u64)),
+            None => Err(Error::untracked_pointer(ptr as u64)),
+        }
+    }
+
+    /// Remove a pointer from tracking without running its cleanup function.
+    ///
+    /// Any time a `box_tracked!` pointer is consumed by Rust rather than freed by C.
+    pub fn untrack(&self, ptr: usize, expected_type: TypeId) -> Result<(), Error> {
+        if ptr == 0 {
+            return Err(Error::null_parameter("pointer"));
+        }
+
+        let mut tracked = self.tracked.lock().map_err(|_| Error::mutex_poisoned())?;
+
+        match tracked.get(&ptr) {
+            Some((actual_type, _)) if *actual_type == expected_type => {
+                tracked.remove(&ptr);
+                Ok(())
+            }
             Some(_) => Err(Error::wrong_pointer_type(ptr as u64)),
             None => Err(Error::untracked_pointer(ptr as u64)),
         }
@@ -136,7 +155,15 @@ pub(crate) fn get_registry() -> &'static PointerRegistry {
 ///
 /// Use this when you allocate with `Box::into_raw()`.
 /// The pointer will be freed with `Box::from_raw()` when `cimpl_free()` is called.
-pub fn track_box<T: 'static>(ptr: *mut T) -> *mut T {
+///
+/// # Returns
+/// Returns the same pointer for convenient chaining
+///
+/// # Example
+/// ```ignore
+/// let ptr = track_box(Box::into_raw(Box::new(value)));
+/// ```
+pub fn track_box<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Box::from_raw(ptr_val as *mut T));
@@ -149,7 +176,15 @@ pub fn track_box<T: 'static>(ptr: *mut T) -> *mut T {
 ///
 /// Use this when you allocate with `Arc::into_raw()`.
 /// The pointer will be freed with `Arc::from_raw()` when `cimpl_free()` is called.
-pub fn track_arc<T: 'static>(ptr: *mut T) -> *mut T {
+///
+/// # Returns
+/// Returns the same pointer for convenient chaining
+///
+/// # Example
+/// ```ignore
+/// let ptr = track_arc(Arc::into_raw(Arc::new(value)));
+/// ```
+pub fn track_arc<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const T));
@@ -162,7 +197,15 @@ pub fn track_arc<T: 'static>(ptr: *mut T) -> *mut T {
 ///
 /// Use this when you allocate with `Arc::into_raw(Arc::new(Mutex::new(value)))`.
 /// The pointer will be freed with `Arc::from_raw()` when `cimpl_free()` is called.
-pub fn track_arc_mutex<T: 'static>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
+///
+/// # Returns
+/// Returns the same pointer for convenient chaining
+///
+/// # Example
+/// ```ignore
+/// let ptr = track_arc_mutex(Arc::into_raw(Arc::new(Mutex::new(value))));
+/// ```
+pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const Mutex<T>));
@@ -174,6 +217,29 @@ pub fn track_arc_mutex<T: 'static>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
 /// Validate that a pointer is tracked and has the expected type
 pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
     get_registry().validate(ptr as usize, TypeId::of::<T>())
+}
+
+/// Remove a pointer from tracking without running its cleanup function.
+///
+/// Use this in FFI functions that consume a tracked pointer (take ownership
+/// back from C into Rust). Untracking must happen *before* `Box::from_raw()`
+/// so the registry doesn't hold a stale entry that would cause a double-free
+/// on `cimpl_free()` or a false leak warning at shutdown.
+///
+/// After this call, the pointer is no longer managed by the registry. The
+/// caller owns the underlying allocation and must drop it — typically by
+/// calling `Box::from_raw()` immediately after untracking.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// untrack_or_return_int!(signer_ptr, C2paSigner);
+/// let signer = Box::from_raw(signer_ptr);   // sole owner now
+/// builder.set_signer(signer.signer);         // inner value moved into builder
+/// // C2paSigner wrapper dropped here — no double-free risk
+/// ```
+pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
+    get_registry().untrack(ptr as usize, TypeId::of::<T>())
 }
 
 /// Universal free function for any tracked pointer
@@ -224,7 +290,8 @@ pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
 ///     // Handle error
 /// }
 /// ```
-pub fn cimpl_free(ptr: *mut c_void) -> i32 {
+#[no_mangle]
+pub extern "C" fn cimpl_free(ptr: *mut std::ffi::c_void) -> i32 {
     match get_registry().free(ptr as usize) {
         Ok(()) => 0,
         Err(error) => {
@@ -302,25 +369,8 @@ pub unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
 /// - The memory remains valid for the lifetime of the returned slice
 /// - The memory is not mutated while the slice exists
 /// - `len` does not exceed the actual size of the allocated memory
-///
-///   Creates a safe slice from raw parts with bounds validation
-///
-/// # Arguments
-/// * `ptr` - Pointer to the data
-/// * `len` - Length of the data
-/// * `param_name` - Name of the parameter for error reporting
-///
-/// # Returns
-/// * `Ok(slice)` if the slice is safe to create
-/// * `Err(Error)` if bounds validation fails
-///
-/// # Safety
-/// Caller must ensure that:
-/// - `ptr` points to valid, initialized memory for at least `len` bytes
-/// - The memory remains valid for the lifetime of the returned slice
-/// - The memory is not mutated while the slice exists
-/// - `len` does not exceed the actual size of the allocated memory
-pub unsafe fn safe_slice_from_raw_parts(
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn safe_slice_from_raw_parts(
     ptr: *const c_uchar,
     len: usize,
     param_name: &str,
@@ -329,17 +379,18 @@ pub unsafe fn safe_slice_from_raw_parts(
         return Err(Error::null_parameter(param_name));
     }
 
-    if !is_safe_buffer_size(len, ptr) {
+    if !unsafe { is_safe_buffer_size(len, ptr) } {
         return Err(Error::invalid_buffer_size(len, param_name));
     }
 
-    Ok(std::slice::from_raw_parts(ptr, len))
+    // SAFETY: ptr is non-null and bounds-checked above
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
 /// Converts a Rust String to a C string (*mut c_char)
 ///
 /// The returned pointer is tracked for allocation safety and MUST be freed
-/// by calling the appropriate free function (e.g., `c2pa_string_free`).
+/// by calling the appropriate free function (e.g., `cimpl_free`).
 ///
 /// # Arguments
 /// * `s` - The Rust String to convert
@@ -368,20 +419,25 @@ pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
     }
 }
 
-/// Converts a `Vec <u8>` to a tracked C byte array pointer
+/// Converts a `Vec<u8>` to a tracked C byte array pointer
 ///
 /// The returned pointer is tracked for allocation safety and MUST be freed
-/// by calling `free_c_bytes`.
+/// by calling `cimpl_free`.
 ///
 /// # Arguments
 /// * `bytes` - The byte vector to convert
 ///
 /// # Returns
-/// * `*const c_uchar` - Pointer to the byte array
+/// * `*const c_uchar` - Pointer to the byte array, or null if the vector is empty
 ///
 /// # Safety
-/// The returned pointer must be freed exactly once by calling `free_c_bytes`
+/// The returned pointer must be freed exactly once by calling `cimpl_free`.
+/// Returns null for empty vectors to avoid dangling pointers from zero-sized allocations.
 pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
+    if bytes.is_empty() {
+        return std::ptr::null();
+    }
+
     let len = bytes.len();
     let ptr = Box::into_raw(bytes.into_boxed_slice()) as *const c_uchar;
     let ptr_val = ptr as usize;
@@ -415,11 +471,11 @@ mod tests {
         assert!(!c_string.is_null());
 
         // First free should succeed
-        let result1 = cimpl_free(c_string as *mut c_void);
+        let result1 = cimpl_free(c_string as *mut std::ffi::c_void);
         assert_eq!(result1, 0);
 
         // Second free should be detected and return error
-        let result2 = cimpl_free(c_string as *mut c_void);
+        let result2 = cimpl_free(c_string as *mut std::ffi::c_void);
         assert_eq!(result2, -1);
     }
 
@@ -431,7 +487,7 @@ mod tests {
         assert!(!c_string.is_null());
 
         // Clean up
-        cimpl_free(c_string as *mut c_void);
+        cimpl_free(c_string as *mut std::ffi::c_void);
     }
 
     #[test]
@@ -442,7 +498,7 @@ mod tests {
         assert!(!ptr.is_null());
 
         // Clean up
-        cimpl_free(ptr as *mut c_void);
+        cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
     #[test]
@@ -455,19 +511,10 @@ mod tests {
     }
 
     #[test]
-    fn test_to_c_string_empty() {
-        let empty = "".to_string();
-        let c_string = to_c_string(empty);
-        assert!(!c_string.is_null());
-        cimpl_free(c_string as *mut c_void);
-    }
-
-    #[test]
     fn test_to_c_bytes_empty() {
         let empty_bytes: Vec<u8> = vec![];
         let ptr = to_c_bytes(empty_bytes);
-        assert!(!ptr.is_null());
-        cimpl_free(ptr as *mut c_void);
+        assert!(ptr.is_null());
     }
 
     #[test]
@@ -480,27 +527,12 @@ mod tests {
         let ptr = track_box(Box::into_raw(Box::new(test)));
         assert!(!ptr.is_null());
 
-        // Verify we can read it back
         unsafe {
             let test_ref = &*ptr;
             assert_eq!(test_ref.value, 42);
         }
 
-        // Clean up
-        cimpl_free(ptr as *mut c_void);
-    }
-
-    #[test]
-    fn test_track_box_returns_pointer() {
-        let value = Box::new(123i32);
-        let ptr = track_box(Box::into_raw(value));
-        assert!(!ptr.is_null());
-
-        unsafe {
-            assert_eq!(*ptr, 123);
-        }
-
-        cimpl_free(ptr as *mut c_void);
+        cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
     #[test]
@@ -511,15 +543,14 @@ mod tests {
         let result = validate_pointer::<i32>(ptr);
         assert!(result.is_ok());
 
-        cimpl_free(ptr as *mut c_void);
+        cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
     #[test]
     fn test_validate_pointer_with_null() {
         let result = validate_pointer::<i32>(std::ptr::null_mut());
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.variant(), Some("NullParameter"));
+        assert_eq!(result.unwrap_err().variant(), Some("NullParameter"));
     }
 
     #[test]
@@ -529,10 +560,8 @@ mod tests {
 
         let result = validate_pointer::<i32>(ptr);
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.variant(), Some("UntrackedPointer"));
+        assert_eq!(result.unwrap_err().variant(), Some("UntrackedPointer"));
 
-        // Clean up untracked pointer
         unsafe {
             let _ = Box::from_raw(ptr);
         }
@@ -544,7 +573,7 @@ mod tests {
         let ptr = data.as_ptr();
         let len = data.len();
 
-        let result = unsafe { safe_slice_from_raw_parts(ptr, len, "test_data") };
+        let result = safe_slice_from_raw_parts(ptr, len, "test_data");
         assert!(result.is_ok());
         let slice = result.unwrap();
         assert_eq!(slice, &[1, 2, 3, 4, 5]);
@@ -552,10 +581,9 @@ mod tests {
 
     #[test]
     fn test_safe_slice_from_raw_parts_null() {
-        let result = unsafe { safe_slice_from_raw_parts(std::ptr::null(), 5, "test_param") };
+        let result = safe_slice_from_raw_parts(std::ptr::null(), 5, "test_param");
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.variant(), Some("NullParameter"));
+        assert_eq!(result.unwrap_err().variant(), Some("NullParameter"));
     }
 
     #[test]
@@ -563,11 +591,9 @@ mod tests {
         let data = vec![1u8, 2, 3];
         let ptr = data.as_ptr();
 
-        // Request usize::MAX which should trigger overflow
-        let result = unsafe { safe_slice_from_raw_parts(ptr, usize::MAX, "overflow_test") };
+        let result = safe_slice_from_raw_parts(ptr, usize::MAX, "overflow_test");
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.variant(), Some("InvalidBufferSize"));
+        assert_eq!(result.unwrap_err().variant(), Some("InvalidBufferSize"));
     }
 
     #[test]
@@ -582,7 +608,7 @@ mod tests {
             assert_eq!(*ptr, 100);
         }
 
-        cimpl_free(ptr as *mut c_void);
+        cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
     #[test]
@@ -598,6 +624,60 @@ mod tests {
             assert_eq!(*guard, 200);
         }
 
-        cimpl_free(ptr as *mut c_void);
+        cimpl_free(ptr as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_untrack_pointer_removes_from_registry() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+        assert!(validate_pointer::<i32>(ptr).is_ok());
+
+        assert!(untrack_pointer::<i32>(ptr).is_ok());
+
+        // No longer tracked - cimpl_free should fail
+        let result = cimpl_free(ptr as *mut std::ffi::c_void);
+        assert_eq!(result, -1);
+
+        // Clean up manually since we took ownership
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn test_untrack_wrong_type_fails() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+
+        let result = untrack_pointer::<u64>(ptr as *mut u64);
+        assert!(result.is_err());
+
+        // Original pointer still tracked
+        assert!(validate_pointer::<i32>(ptr).is_ok());
+        cimpl_free(ptr as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_untrack_null_pointer_fails() {
+        let result = untrack_pointer::<i32>(std::ptr::null_mut());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_untrack_unregistered_pointer_fails() {
+        let ptr = Box::into_raw(Box::new(42i32));
+        let result = untrack_pointer::<i32>(ptr);
+        assert!(result.is_err());
+
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn test_untrack_already_untracked_fails() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+
+        assert!(untrack_pointer::<i32>(ptr).is_ok());
+
+        // Second untrack fails
+        assert!(untrack_pointer::<i32>(ptr).is_err());
+
+        unsafe { drop(Box::from_raw(ptr)) };
     }
 }

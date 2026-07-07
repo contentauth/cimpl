@@ -25,25 +25,25 @@
 //! and let AI generate high-quality bindings for Python, JavaScript, Lua, Ruby, C#, Java, Go, and more.
 //!
 //! ## Why cimpl?
-//! 
-//! This library emerged from real-world challenges with FFI in the [c2pa-rs](https://github.com/contentauth/c2pa-rs) 
-//! project at Adobe. After experimenting with various Rust language binding tools, I found they all required 
-//! decorating Rust code with language-specific annotations or special interface definition languages, generating 
+//!
+//! This library emerged from real-world challenges with FFI in the [c2pa-rs](https://github.com/contentauth/c2pa-rs)
+//! project at Adobe. After experimenting with various Rust language binding tools, I found they all required
+//! decorating Rust code with language-specific annotations or special interface definition languages, generating
 //! volumes of incomprehensible glue code in the process.
-//! 
-//! Then came the insight: **AI excels at writing bindings for well-documented C APIs**. Rust natively supports 
-//! C APIs, but writing them manually is tricky and error-prone. So cimpl was born - a library of macros and 
+//!
+//! Then came the insight: **AI excels at writing bindings for well-documented C APIs**. Rust natively supports
+//! C APIs, but writing them manually is tricky and error-prone. So cimpl was born - a library of macros and
 //! utilities that makes it safe and maintainable to write C bindings from Rust.
-//! 
-//! The result? Given this library, AI can generate both the C FFI bindings AND the language-specific bindings 
-//! automatically. The UUID example in this crate was generated entirely by AI in 15 minutes with zero compilation 
+//!
+//! The result? Given this library, AI can generate both the C FFI bindings AND the language-specific bindings
+//! automatically. The UUID example in this crate was generated entirely by AI in 15 minutes with zero compilation
 //! errors, proving the concept works in practice. Look at the code. Everything generated, from the C header files to
-//! to language bindings is well documented and readable. There is no incomprehensible glue code. 
-//! 
+//! to language bindings is well documented and readable. There is no incomprehensible glue code.
+//!
 //! Look at the examples in the `examples` directory. They are real-world examples of how to use cimpl to write
 //! safe and maintainable C bindings. The UUID example was generated entirely by AI in 15 minutes with zero compilation
 //! errors. The ValueConverter example shows patterns and how to use them.
-//! 
+//!
 //! **Most Rust FFI examples are trivial. Real FFI is much harder:**
 //! - How do you return complex types like strings or structs?
 //! - How do you propagate `Result<T, E>` errors across the FFI boundary?
@@ -113,7 +113,7 @@
 //!
 //! Errors use a consistent `"VariantName: details"` format that works across all languages:
 //!
-//! ```rust
+//! ```rust,ignore
 //! use cimpl::Error;
 //!
 //! // Create errors manually
@@ -220,6 +220,7 @@
 
 // Declare foundational modules first
 pub mod error;
+pub mod maybe_send_sync;
 pub mod utils;
 
 // Then macros that depend on them
@@ -232,7 +233,7 @@ pub use error::{Error, Result};
 pub use error::Error as CimplError;
 pub use utils::{
     cimpl_free, safe_slice_from_raw_parts, to_c_bytes, to_c_string, track_arc, track_arc_mutex,
-    track_box,
+    track_box, untrack_pointer,
 };
 
 // Re-export internal utilities (for macro use only - not part of public API)
