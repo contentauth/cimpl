@@ -215,8 +215,8 @@
 //!
 //! Build once in Rust. Expose through C. Use everywhere.
 //!
-//! [`AI_WORKFLOW.md`]: https://github.com/gpeacock/cimpl/blob/main/AI_WORKFLOW.md
-//! [`PHILOSOPHY.md`]: https://github.com/gpeacock/cimpl/blob/main/PHILOSOPHY.md
+//! [`AI_WORKFLOW.md`]: https://github.com/contentauth/cimpl/blob/main/AI_WORKFLOW.md
+//! [`PHILOSOPHY.md`]: https://github.com/contentauth/cimpl/blob/main/PHILOSOPHY.md
 
 // Declare foundational modules first
 pub mod error;
