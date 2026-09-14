@@ -61,10 +61,10 @@ Every major language has mature, battle-tested C FFI support:
 ### 2. Language Tooling Independence
 
 When a language's FFI tooling has issues:
-- ✅ Your C API remains unchanged
-- ✅ Other languages are unaffected
-- ✅ You can switch to alternative FFI libraries
-- ✅ You can wait for the tooling to be fixed
+- Your C API remains unchanged
+- Other languages are unaffected
+- You can switch to alternative FFI libraries
+- You can wait for the tooling to be fixed
 
 **Note on Node.js**: While Node.js *can* use C FFI via libraries like [Koffi](https://github.com/Koromix/koffi), the better approach for Node.js is to use [`wasm-bindgen`](https://github.com/rustwasm/wasm-bindgen) which provides better performance, native async support, and automatic TypeScript definitions.
 
@@ -84,7 +84,7 @@ An AI can read your generated C header and produce high-quality bindings for alm
 ### 1. Safety First, Performance Second
 
 ```rust
-// ❌ Don't do this (manual unsafe)
+// Don't do this (manual unsafe)
 #[no_mangle]
 pub extern "C" fn unsafe_function(ptr: *mut T) -> i32 {
     unsafe {
@@ -96,7 +96,7 @@ pub extern "C" fn unsafe_function(ptr: *mut T) -> i32 {
     }
 }
 
-// ✅ Do this (cimpl macros)
+// Do this (cimpl macros)
 #[no_mangle]
 pub extern "C" fn safe_function(ptr: *mut T) -> i32 {
     let obj = deref_mut_or_return_int!(ptr, T);
@@ -205,29 +205,29 @@ Examples:
 ```
 
 This format is:
-- ✅ Human-readable (developers can read it)
-- ✅ Machine-parseable (split on `": "` to get variant and details)
-- ✅ AI-friendly (easy to convert to typed exceptions)
-- ✅ Cross-language (works in C, C++, Python, Swift, Kotlin, Go - proven in production)
+- Human-readable (developers can read it)
+- Machine-parseable (split on `": "` to get variant and details)
+- AI-friendly (easy to convert to typed exceptions)
+- Cross-language (works in C, C++, Python, Swift, Kotlin, Go - proven in production)
 
 ### 5. Transparent Handle Design
 
 Let users choose their own data structures:
 
 ```rust
-// ✅ Direct Box (simple ownership)
+// Direct Box (simple ownership)
 #[no_mangle]
 pub extern "C" fn uuid_new_v4() -> *mut Uuid {
     box_tracked!(Uuid::new_v4())
 }
 
-// ✅ Arc (shared ownership, if needed)
+// Arc (shared ownership, if needed)
 #[no_mangle]
 pub extern "C" fn shared_resource_create() -> *mut Resource {
     arc_tracked!(Resource::new())
 }
 
-// ✅ Arc<Mutex> (thread-safe shared state, if needed)
+// Arc<Mutex> (thread-safe shared state, if needed)
 #[no_mangle]
 pub extern "C" fn thread_safe_create() -> *mut ThreadSafeState {
     arc_mutex_tracked!(ThreadSafeState::new())
@@ -363,7 +363,7 @@ All tracked allocations can be freed with library-specific `*_free()` functions 
 ### DO: Keep it Simple
 
 ```c
-// ✅ Good: Simple, obvious functions
+// Good: Simple, obvious functions
 ValueConverter* vc_new_v4(void);
 char* vc_to_string(ValueConverter* vc);
 bool vc_is_empty(ValueConverter* vc);
@@ -373,7 +373,7 @@ void vc_free(void* ptr);  // Wraps cimpl::cimpl_free()
 ### DON'T: Over-engineer
 
 ```c
-// ❌ Bad: Complex, non-standard patterns
+// Bad: Complex, non-standard patterns
 int uuid_new_v4_ex(UuidHandle** handle, UuidOptions* opts, ErrorCtx* ctx);
 size_t uuid_to_string_buf(UuidHandle* h, char* buf, size_t len, uint32_t flags);
 ```
@@ -406,7 +406,7 @@ pub extern "C" fn vc_from_i32(value: i32) -> *mut ValueConverter {
 ### DO: Provide Error Context
 
 ```c
-// ✅ Good: Descriptive error messages in parseable format
+// Good: Descriptive error messages in parseable format
 char* vc_last_error(void);  // Returns "VariantName: details"
 
 // Example errors:
@@ -418,13 +418,13 @@ char* vc_last_error(void);  // Returns "VariantName: details"
 ### DON'T: Throw Exceptions or Panic
 
 ```rust
-// ❌ Bad: Will crash the C caller
+// Bad: Will crash the C caller
 #[no_mangle]
 pub extern "C" fn bad_function() {
     panic!("Oops!");  // ← Undefined behavior in FFI
 }
 
-// ✅ Good: Handle errors gracefully
+// Good: Handle errors gracefully
 #[no_mangle]
 pub extern "C" fn good_function() -> i32 {
     match risky_operation() {
@@ -518,10 +518,10 @@ end
 **Example:** `ffi-napi` stopped working with Node.js 18.20.8+
 
 **Solution:**
-1. ✅ Your C API is fine - don't change it
-2. ✅ Try an alternative FFI library (like Koffi)
-3. ✅ OR use compile-time bindings (like napi-rs)
-4. ✅ OR wait for the FFI library to be fixed
+1. Your C API is fine - don't change it
+2. Try an alternative FFI library (like Koffi)
+3. OR use compile-time bindings (like napi-rs)
+4. OR wait for the FFI library to be fixed
 
 ### Other languages are completely unaffected!
 
@@ -530,7 +530,7 @@ end
 If you get "WrongHandleType" errors:
 
 ```rust
-// ❌ Wrong: Type mismatch
+// Wrong: Type mismatch
 let ptr = box_tracked!(TypeA::new());
 deref_or_return_null!(ptr, TypeB)  // ← Error! TypeId mismatch
 ```

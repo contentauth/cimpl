@@ -34,13 +34,13 @@ pub extern "C" fn add(a: i32, b: i32) -> i32 { a + b }
 - How do you make errors usable in other languages?
 
 **cimpl solves the hard problems:**
-- ✅ Type-safe pointer tracking with validation
-- ✅ Automatic error handling with descriptive, parseable messages
-- ✅ Memory leak detection in tests
-- ✅ Clean macros for production patterns (not toy examples)
-- ✅ Object-oriented APIs (structs with methods, not just functions)
-- ✅ AI-friendly C headers (auto-generated via cbindgen)
-- ✅ One codebase → many language bindings
+- Type-safe pointer tracking with validation
+- Automatic error handling with descriptive, parseable messages
+- Memory leak detection in tests
+- Clean macros for production patterns (not toy examples)
+- Object-oriented APIs (structs with methods, not just functions)
+- AI-friendly C headers (auto-generated via cbindgen)
+- One codebase → many language bindings
 
 > **Note**: For Node.js and WASM targets, use [`wasm-bindgen`](https://github.com/rustwasm/wasm-bindgen) instead. While Node.js can use cimpl via [Koffi FFI](https://github.com/Koromix/koffi), WASM provides better performance and integration.
 
@@ -159,7 +159,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-cimpl = "0.1"
+cimpl = "0.4"
 thiserror = "2.0"  # Recommended for ergonomic errors
 
 [build-dependencies]
@@ -180,12 +180,12 @@ cbindgen = "0.27"
 
 **This is not a toy example.** Unlike the typical `add(a, b)` FFI tutorials, this demonstrates the hard parts:
 
-- ✅ **Real-world utility**: Value converter for type conversion (i32, u32, i64, u64, bytes, strings, hex)
-- ✅ **Multiple constructors**: `from_i32()`, `from_string()`, `from_hex()`, etc.
-- ✅ **Fallible conversions**: `to_i32()` might fail (wrong size), `to_string()` might fail (invalid UTF-8)
-- ✅ **Proper validation**: Size limits, UTF-8 checks, overflow detection
-- ✅ **Memory safety**: Tracked allocations, type validation, leak detection
-- ✅ **Clear separation**: `lib.rs` (pure Rust API) vs `ffi.rs` (C FFI wrapper)
+- **Real-world utility**: Value converter for type conversion (i32, u32, i64, u64, bytes, strings, hex)
+- **Multiple constructors**: `from_i32()`, `from_string()`, `from_hex()`, etc.
+- **Fallible conversions**: `to_i32()` might fail (wrong size), `to_string()` might fail (invalid UTF-8)
+- **Proper validation**: Size limits, UTF-8 checks, overflow detection
+- **Memory safety**: Tracked allocations, type validation, leak detection
+- **Clear separation**: `lib.rs` (pure Rust API) vs `ffi.rs` (C FFI wrapper)
 
 **Two-file structure:**
 - `src/lib.rs` - Standard Rust library (no FFI concerns)
