@@ -6,16 +6,16 @@ This is a **comprehensive reference implementation** that exercises ALL cimpl pa
 
 This example is designed to systematically test every cimpl pattern without relying on external crates. It's self-contained and demonstrates:
 
-- ✅ String parameters (C → Rust)
-- ✅ String results (Rust → C)
-- ✅ Byte arrays in/out
-- ✅ Result<T, E> with custom error enum
-- ✅ Option<T> for validation
-- ✅ Struct lifecycle (create, modify, query, destroy)
-- ✅ Numeric parameters and returns
-- ✅ Boolean returns
-- ✅ Error handling (last_error, clear_error)
-- ✅ Memory management (tracked allocations)
+- String parameters (C → Rust)
+- String results (Rust → C)
+- Byte arrays in/out
+- Result<T, E> with custom error enum
+- Option<T> for validation
+- Struct lifecycle (create, modify, query, destroy)
+- Numeric parameters and returns
+- Boolean returns
+- Error handling (last_error, clear_error)
+- Memory management (tracked allocations)
 
 ## Domain: Secret Messages
 

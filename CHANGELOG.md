@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-14
+
+Syncs cimpl with the pointer-registry rewrite done for the embedded copy in
+c2pa-rs, replacing simple pointer validation with borrow-checked handle
+tracking.
+
+### Added
+
+- Handle-based pointer tracking: tracked pointers are now opaque, scrambled
+  ids (not real addresses), so a stale handle can never alias a different
+  object that later reuses the same address
+- Reader/writer borrow tracking per handle via `checkout_shared()` /
+  `checkout_exclusive()`, returning RAII guards (`SharedCheckout`,
+  `ExclusiveCheckout`, `TypedShared<T>`, `TypedExclusive<T>`) instead of bare
+  references, so concurrent misuse of a handle is rejected instead of racing.
+  `deref_or_return!` / `deref_mut_or_return!` now check out a guarded borrow
+  under the hood rather than dereferencing directly
+- `deref_mut_option!`, `deref_mut_option_or_return!`,
+  `deref_mut_option_or_return_int!` macros for parameters where NULL is a
+  legitimate "not provided" rather than an error
+- `cstr_array_or_return_null!` macro for NULL-terminated `*const *const
+  c_char` C string arrays
+- New `Error` variants/constructors: `foreign_process()` (registry accessed
+  after `fork()` without `exec()`), `wrong_wrapper_kind()` (`Arc`- vs
+  `Box`-backed handle mismatch on consuming ownership), `tracking_refused()`
+  (handle id space exhausted, or other tracking failures), `pointer_in_use()`
+  (exclusive borrow already outstanding)
+- `ensure_trackable()`, `is_safe_buffer_size()`, `track_string_array()`,
+  `untrack_owned()`, `untrack_owned_pair()` utility functions
+- Fork safety: registry calls from a process that didn't create the registry
+  now fail with `ForeignProcess` instead of corrupting shared state
+
+### Changed
+
+- Mutex poisoning in the pointer registry is now recovered from instead of
+  surfaced as `MutexPoisoned` — a panic elsewhere no longer permanently
+  bricks every previously tracked handle (`Error::mutex_poisoned()` is kept
+  only for the existing test that exercises it directly)
+- `untrack_pointer()` replaced by `untrack_owned()` (single handle) and
+  `untrack_owned_pair()` (two handles, taken atomically so a partial failure
+  can't leak one side)
+- Bumped `rust-version` to 1.87
+
+### Removed
+
+- `validate_pointer` (was `#[doc(hidden)]` and re-exported only for macro
+  use) — superseded by `checkout_shared()` / `checkout_exclusive()`
+- `MAX_CSTRING_LEN` / `MAX_STRING_ARRAY_LEN` public constants from
+  `macros.rs`
+
 ## [0.3.1] - 2026-02-16
 
 ### Documentation
@@ -104,14 +154,14 @@ This is a **new project** taking over the `cimpl` crate name. Previous versions 
 
 ### Features
 
-- ✅ Pattern-driven design enabling AI code generation
-- ✅ Zero unsafe code needed in user FFI functions
-- ✅ Type validation prevents pointer confusion
-- ✅ Memory leak detection in tests
-- ✅ Double-free protection
-- ✅ Cross-language error format
-- ✅ cbindgen integration for C header generation
-- ✅ Production-ready examples with documentation
+- Pattern-driven design enabling AI code generation
+- Zero unsafe code needed in user FFI functions
+- Type validation prevents pointer confusion
+- Memory leak detection in tests
+- Double-free protection
+- Cross-language error format
+- cbindgen integration for C header generation
+- Production-ready examples with documentation
 
 ### Philosophy
 

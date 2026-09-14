@@ -5,8 +5,8 @@
 //!
 //! ## Key Pattern: Direct Usage of External Crate
 //!
-//! ```rust
-//! // ✅ GOOD: Call uuid::Uuid methods directly
+//! ```rust,ignore
+//! // GOOD: Call uuid::Uuid methods directly
 //! #[no_mangle]
 //! pub extern "C" fn uuid_new_v4() -> *mut Uuid {
 //!     box_tracked!(Uuid::new_v4())  // Direct call to uuid crate!
@@ -94,7 +94,7 @@ pub extern "C" fn uuid_max() -> *mut Uuid {
 #[no_mangle]
 pub extern "C" fn uuid_parse(s: *const c_char) -> *mut Uuid {
     let uuid_str = cstr_or_return_null!(s);
-    let uuid = ok_or_return_null!(Uuid::parse_str(&uuid_str));  // Direct call
+    let uuid = ok_or_return_null!(Uuid::parse_str(&uuid_str).map_err(Error::from));  // Direct call
     box_tracked!(uuid)
 }
 
@@ -130,7 +130,7 @@ pub extern "C" fn uuid_from_bytes(bytes: *const u8) -> *mut Uuid {
 /// # Parameters
 /// - `uuid`: Pointer to UUID
 #[no_mangle]
-pub extern "C" fn uuid_to_hyphenated(uuid: *const Uuid) -> *mut c_char {
+pub extern "C" fn uuid_to_hyphenated(uuid: *mut Uuid) -> *mut c_char {
     let uuid_ref = deref_or_return_null!(uuid, Uuid);
     to_c_string(uuid_ref.hyphenated().to_string())  // Direct call
 }
@@ -145,7 +145,7 @@ pub extern "C" fn uuid_to_hyphenated(uuid: *const Uuid) -> *mut c_char {
 /// # Parameters
 /// - `uuid`: Pointer to UUID
 #[no_mangle]
-pub extern "C" fn uuid_to_simple(uuid: *const Uuid) -> *mut c_char {
+pub extern "C" fn uuid_to_simple(uuid: *mut Uuid) -> *mut c_char {
     let uuid_ref = deref_or_return_null!(uuid, Uuid);
     to_c_string(uuid_ref.simple().to_string())  // Direct call
 }
@@ -160,7 +160,7 @@ pub extern "C" fn uuid_to_simple(uuid: *const Uuid) -> *mut c_char {
 /// # Parameters
 /// - `uuid`: Pointer to UUID
 #[no_mangle]
-pub extern "C" fn uuid_to_urn(uuid: *const Uuid) -> *mut c_char {
+pub extern "C" fn uuid_to_urn(uuid: *mut Uuid) -> *mut c_char {
     let uuid_ref = deref_or_return_null!(uuid, Uuid);
     to_c_string(uuid_ref.urn().to_string())  // Direct call
 }
@@ -175,7 +175,7 @@ pub extern "C" fn uuid_to_urn(uuid: *const Uuid) -> *mut c_char {
 /// - `uuid`: Pointer to UUID
 /// - `out_bytes`: Pointer to buffer of at least 16 bytes
 #[no_mangle]
-pub extern "C" fn uuid_as_bytes(uuid: *const Uuid, out_bytes: *mut u8) -> bool {
+pub extern "C" fn uuid_as_bytes(uuid: *mut Uuid, out_bytes: *mut u8) -> bool {
     let uuid_ref = deref_or_return_false!(uuid, Uuid);
     ptr_or_return!(out_bytes, false);
     
@@ -198,10 +198,10 @@ pub extern "C" fn uuid_as_bytes(uuid: *const Uuid, out_bytes: *mut u8) -> bool {
 /// - `a`: Pointer to first UUID
 /// - `b`: Pointer to second UUID
 #[no_mangle]
-pub extern "C" fn uuid_equals(a: *const Uuid, b: *const Uuid) -> bool {
+pub extern "C" fn uuid_equals(a: *mut Uuid, b: *mut Uuid) -> bool {
     let uuid_a = deref_or_return_false!(a, Uuid);
     let uuid_b = deref_or_return_false!(b, Uuid);
-    uuid_a == uuid_b
+    *uuid_a == *uuid_b
 }
 
 /// Check if UUID is nil (all zeros).
@@ -211,7 +211,7 @@ pub extern "C" fn uuid_equals(a: *const Uuid, b: *const Uuid) -> bool {
 /// # Parameters
 /// - `uuid`: Pointer to UUID
 #[no_mangle]
-pub extern "C" fn uuid_is_nil(uuid: *const Uuid) -> bool {
+pub extern "C" fn uuid_is_nil(uuid: *mut Uuid) -> bool {
     let uuid_ref = deref_or_return_false!(uuid, Uuid);
     uuid_ref.is_nil()
 }
@@ -223,7 +223,7 @@ pub extern "C" fn uuid_is_nil(uuid: *const Uuid) -> bool {
 /// # Parameters
 /// - `uuid`: Pointer to UUID
 #[no_mangle]
-pub extern "C" fn uuid_is_max(uuid: *const Uuid) -> bool {
+pub extern "C" fn uuid_is_max(uuid: *mut Uuid) -> bool {
     let uuid_ref = deref_or_return_false!(uuid, Uuid);
     uuid_ref.is_max()
 }

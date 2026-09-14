@@ -52,10 +52,10 @@ src/
 ```
 
 **Why this matters:**
-- ✅ Clear separation between "your library" and "FFI glue"
-- ✅ Pure Rust API can be used by other Rust crates
-- ✅ FFI layer is a thin wrapper, easy to review
-- ✅ Shows how to add FFI to an existing Rust library
+- Clear separation between "your library" and "FFI glue"
+- Pure Rust API can be used by other Rust crates
+- FFI layer is a thin wrapper, easy to review
+- Shows how to add FFI to an existing Rust library
 
 **Example:**
 
@@ -88,7 +88,7 @@ See `examples/reference/` for a complete implementation of this pattern.
 
 ## Common Anti-Patterns to AVOID
 
-### ❌ DON'T: Manual null checks
+### DON'T: Manual null checks
 ```rust
 // BAD
 let ctx_ref = unsafe {
@@ -100,13 +100,13 @@ let ctx_ref = unsafe {
 };
 ```
 
-### ✅ DO: Use deref macros
+### DO: Use deref macros
 ```rust
 // GOOD
 let ctx_ref = deref_mut_or_return_int!(ctx, C2paContext);
 ```
 
-### ❌ DON'T: Manual Result matching
+### DON'T: Manual Result matching
 ```rust
 // BAD
 match some_operation() {
@@ -121,7 +121,7 @@ match some_operation() {
 }
 ```
 
-### ✅ DO: Use ok_or_return macros
+### DO: Use ok_or_return macros
 ```rust
 // GOOD - automatic error conversion via From trait
 let value = ok_or_return_int!(some_operation());
@@ -139,7 +139,7 @@ ok_or_return!(
 )
 ```
 
-### ❌ DON'T: Manual byte array validation
+### DON'T: Manual byte array validation
 ```rust
 // BAD
 if data.is_null() {
@@ -149,7 +149,7 @@ if data.is_null() {
 let bytes = unsafe { std::slice::from_raw_parts(data, len) };
 ```
 
-### ✅ DO: Use bytes_or_return macro
+### DO: Use bytes_or_return macro
 ```rust
 // GOOD
 let bytes = bytes_or_return_null!(data, len, "data");
