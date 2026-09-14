@@ -6,11 +6,11 @@ Python bindings for the ValueConverter C library, demonstrating how to wrap a ci
 
 This is **not a toy example**. Unlike trivial FFI demos, these bindings show production patterns:
 
-✅ **Error handling** - C errors converted to typed Python exceptions  
-✅ **Memory management** - Automatic cleanup with context managers  
-✅ **Type safety** - Proper ctypes signatures for all functions  
-✅ **Pythonic API** - Natural Python interface wrapping C  
-✅ **String parsing** - Parsing cimpl's "VariantName: details" error format  
+**Error handling** - C errors converted to typed Python exceptions  
+**Memory management** - Automatic cleanup with context managers  
+**Type safety** - Proper ctypes signatures for all functions  
+**Pythonic API** - Natural Python interface wrapping C  
+**String parsing** - Parsing cimpl's "VariantName: details" error format  
 
 ## Installation
 

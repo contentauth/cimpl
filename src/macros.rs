@@ -110,8 +110,9 @@
 //! # Quick Reference: Which Macro to Use?
 //!
 //! ## Input Validation (from C)
-//! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → validates & dereferences to `&Type`
+//! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → borrows the object as `&Type` for the guard's lifetime
 //! - **String from C**: `cstr_or_return_null!(c_str)` → converts C string to Rust `String`
+//! - **String array from C**: `cstr_array_or_return_null!(ptr)` → converts NULL-terminated `*const *const c_char` to `Vec<String>`
 //! - **Byte array from C**: `bytes_or_return_null!(ptr, len, "name")` → validates & converts to `&[u8]`
 //! - **Check not null**: `ptr_or_return_null!(ptr)` → just null check, no deref (for output params)
 //!
@@ -128,14 +129,14 @@
 //! All macros follow: `action_or_return_<what>`
 //! - `_null`: Returns `NULL` pointer
 //! - `_int`: Returns `-1`
-//! - `_zero`: Returns `0`  
+//! - `_zero`: Returns `0`
 //! - `_false`: Returns `false`
 //!
 //! # Type Mapping Guide
 //!
 //! | Rust Type              | C receives      | Macro to use                      | Example |
 //! |------------------------|-----------------|-----------------------------------|---------|
-//! | `*mut T` (from C)      | -               | `deref_or_return_null!(ptr, T)`   | Getting object from C |
+//! | `*mut T` (from C)      | -               | `deref_or_return_null!(ptr, T)`| Getting object from C |
 //! | `*const c_char` (from C)| -              | `cstr_or_return_null!(s)`         | Getting string from C |
 //! | `*const c_uchar` + len | -               | `bytes_or_return_null!(p, len, "name")` | Getting byte array from C |
 //! | `Result<T, ExtErr>`    | pointer/int     | `ok_or_return_null!(r)`           | External crate errors (From trait) |
@@ -208,17 +209,6 @@
 //! }
 //! ```
 
-/// Maximum length for C strings when using bounded conversion (1MB)
-pub const MAX_CSTRING_LEN: usize = 1048576;
-
-/// Maximum number of entries accepted from a NULL-terminated C string array.
-/// Guards against runaway iteration when a caller omits the NULL terminator.
-pub const MAX_STRING_ARRAY_LEN: usize = 256;
-
-// Re-export types/functions that macros need
-// May not be directly used but needed for macro expansion
-//pub use crate::utils::validate_pointer;
-
 // ============================================================================
 // Pointer Management Macros
 // ============================================================================
@@ -233,19 +223,27 @@ pub const MAX_STRING_ARRAY_LEN: usize = 256;
 // - _zero: Returns 0 on error
 // - _false: Returns false on error
 // - (base): Custom return value
-
+//
 // ----------------------------------------------------------------------------
 // Deref Macros - Return reference immediately
 // ----------------------------------------------------------------------------
-
 /// Validate pointer and dereference immutably, returning reference
 /// Returns early with custom value on error
+///
+/// # Examples
+/// ```rust,ignore
+/// let value = deref_or_return!(ptr, Type, -1);
+/// ```
 #[macro_export]
 macro_rules! deref_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::validate_pointer::<$type>($ptr) {
-            Ok(()) => unsafe { &*($ptr as *const $type) },
+        let ptr = $ptr;
+        if ptr.is_null() {
+            $crate::Error::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+        match $crate::checkout_shared::<$type>(ptr) {
+            Ok(guard) => guard,
             Err(e) => {
                 $crate::Error::from(e).set_last();
                 return $err_val;
@@ -256,6 +254,10 @@ macro_rules! deref_or_return {
 
 /// Validate pointer and dereference immutably, returning reference
 /// Returns NULL on error
+/// # Examples
+/// ```rust,ignore
+/// let value = deref_or_return_null!(ptr, Type);
+/// ```
 #[macro_export]
 macro_rules! deref_or_return_null {
     ($ptr:expr, $type:ty) => {{
@@ -295,9 +297,13 @@ macro_rules! deref_or_return_false {
 #[macro_export]
 macro_rules! deref_mut_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::validate_pointer::<$type>($ptr) {
-            Ok(()) => unsafe { &mut *($ptr as *mut $type) },
+        let ptr = $ptr;
+        if ptr.is_null() {
+            $crate::Error::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+        match $crate::checkout_exclusive::<$type>(ptr) {
+            Ok(guard) => guard,
             Err(e) => {
                 $crate::Error::from(e).set_last();
                 return $err_val;
@@ -324,6 +330,69 @@ macro_rules! deref_mut_or_return_int {
     }};
 }
 
+/// Resolve a tracked pointer to its real address and dereference it
+/// mutably, returning `None` for NULL, untracked, or wrong-type pointers —
+/// no error is set, no early return happens.
+///
+/// This is for internal code (tests, cleanup paths) that decides for itself
+/// how to handle a missing value. FFI entry points taking pointers from C
+/// should use `deref_mut_or_return!` (NULL is an error) or
+/// `deref_mut_option_or_return!` (NULL is a legitimate "not provided")
+/// instead, so C gets a proper error for a genuinely bad pointer.
+///
+/// # Examples
+/// ```rust,ignore
+/// let stream = deref_mut_option!(ptr, C2paStream).expect("always tracked here");
+/// ```
+#[macro_export]
+macro_rules! deref_mut_option {
+    ($ptr:expr, $type:ty) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
+            None
+        } else {
+            $crate::checkout_exclusive::<$type>(ptr).ok()
+        }
+    }};
+}
+
+/// Borrow the handle/object for a write operation,
+/// return `None` on NULL pointers.
+/// NULL in this case is not a showstopper error,
+/// since nulls may represent optional parameters.
+///
+/// # Examples
+/// ```rust,ignore
+/// if let Some(asset) = deref_mut_option_or_return!(asset_ptr, C2paStream, -1) {
+///     asset.do_something();
+/// }
+/// ```
+#[macro_export]
+macro_rules! deref_mut_option_or_return {
+    ($ptr:expr, $type:ty, $err_val:expr) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
+            None
+        } else {
+            match $crate::checkout_exclusive::<$type>(ptr) {
+                Ok(guard) => Some(guard),
+                Err(e) => {
+                    $crate::Error::from(e).set_last();
+                    return $err_val;
+                }
+            }
+        }
+    }};
+}
+
+/// As `deref_mut_option_or_return!`, returning -1.
+#[macro_export]
+macro_rules! deref_mut_option_or_return_int {
+    ($ptr:expr, $type:ty) => {{
+        $crate::deref_mut_option_or_return!($ptr, $type, -1)
+    }};
+}
+
 /// Create a Box-wrapped pointer and track it
 /// Returns the raw pointer
 #[macro_export]
@@ -346,29 +415,38 @@ macro_rules! arc_tracked {
     }};
 }
 
-/// Untrack a pointer from the registry (ownership transfer from C to Rust).
+/// Untrack a pointer from the registry and take ownership of the pointee
+/// (ownership transfer from C to Rust), yielding it by value.
 ///
-/// Validates the pointer is tracked with the correct type, then removes it
-/// from the registry without running cleanup. Call this *before* `Box::from_raw()`
-/// in any FFI function that consumes a tracked pointer, so the registry doesn't
-/// hold a stale entry that would cause a double-free or false leak warning.
-///
-/// After this macro succeeds, the caller owns the allocation and must drop it
-/// (typically via `Box::from_raw()` immediately after).
+/// Validates the pointer is tracked with the correct type, removes it from the
+/// registry so it can't be double-freed or flagged as a leak, then immediately
+/// `Box::from_raw`s it and moves the value out. Because the result is an owned
+/// value rather than a pointer, any early return written *after* this macro
+/// (e.g. from validating another argument) drops it via Rust's ordinary
+/// scope-exit `Drop` — so the input is consumed the same way on every failure
+/// path, not just when the rest of the function succeeds.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// // In c2pa_context_builder_set_signer — signer is moved into the builder:
-/// untrack_or_return_int!(signer_ptr, C2paSigner);
-/// let signer = Box::from_raw(signer_ptr);
+/// let signer = untrack_or_return_int!(signer_ptr, C2paSigner);
+/// builder.set_signer(signer.signer);
+///
+/// // In c2pa_context_builder_build — builder is consumed to produce a context:
+/// let builder = untrack_or_return_null!(builder, C2paContextBuilder);
+/// box_tracked!(builder.into_shared())
 /// ```
 #[macro_export]
 macro_rules! untrack_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::untrack_pointer::<$type>($ptr) {
-            Ok(()) => {}
+        let ptr = $ptr;
+        if ptr.is_null() {
+            $crate::Error::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+        match $crate::untrack_owned::<$type>(ptr) {
+            Ok(value) => value,
             Err(e) => {
                 $crate::Error::from(e).set_last();
                 return $err_val;
@@ -377,7 +455,7 @@ macro_rules! untrack_or_return {
     }};
 }
 
-/// Untrack a pointer from the registry, returning -1 on error.
+/// Untrack a pointer and take ownership of the pointee, returning -1 on error.
 #[macro_export]
 macro_rules! untrack_or_return_int {
     ($ptr:expr, $type:ty) => {{
@@ -385,7 +463,7 @@ macro_rules! untrack_or_return_int {
     }};
 }
 
-/// Untrack a pointer from the registry, returning NULL on error.
+/// Untrack a pointer and take ownership of the pointee, returning NULL on error.
 #[macro_export]
 macro_rules! untrack_or_return_null {
     ($ptr:expr, $type:ty) => {{
@@ -393,16 +471,12 @@ macro_rules! untrack_or_return_null {
     }};
 }
 
-/// Check pointer not null or early-return with error value
-#[macro_export]
-macro_rules! ptr_or_return {
-    ($ptr:expr, $err_val:expr) => {
-        if $ptr.is_null() {
-            $crate::Error::null_parameter(stringify!($ptr)).set_last();
-            return $err_val;
-        }
-    };
-}
+/// Maximum length for C strings when using bounded conversion (1MB)
+pub const MAX_CSTRING_LEN: usize = 1048576;
+
+/// Maximum number of entries accepted from a NULL-terminated C string array.
+/// Guards against runaway iteration when a caller omits the NULL terminator.
+pub const MAX_STRING_ARRAY_LEN: usize = 256;
 
 /// Convert C string with bounded length check or early-return with error value.
 /// Errors if the string exceeds MAX_CSTRING_LEN bytes.
@@ -663,6 +737,17 @@ macro_rules! some_or_return_other_false {
     };
 }
 
+/// Check pointer not null or early-return with error value
+#[macro_export]
+macro_rules! ptr_or_return {
+    ($ptr:expr, $err_val:expr) => {
+        if $ptr.is_null() {
+            $crate::Error::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+    };
+}
+
 /// If the expression is null, set the last error and return null.
 #[macro_export]
 macro_rules! ptr_or_return_null {
@@ -677,6 +762,60 @@ macro_rules! ptr_or_return_int {
     ($ptr : expr) => {
         $crate::ptr_or_return!($ptr, -1)
     };
+}
+
+/// Two stream arguments naming the same handle would check it out twice and
+/// block until the borrow deadline, then fail with the wrong error. Compare
+/// first and fail immediately instead.
+#[macro_export]
+macro_rules! distinct_or_return {
+    ($first : expr, $second : expr, $err_val : expr) => {
+        if !$first.is_null() && std::ptr::eq($first, $second) {
+            $crate::Error::other(concat!(
+                stringify!($first),
+                " and ",
+                stringify!($second),
+                " must be distinct handles"
+            ))
+            .set_last();
+            return $err_val;
+        }
+    };
+}
+
+/// As `distinct_or_return!`, returning -1.
+#[macro_export]
+macro_rules! distinct_or_return_int {
+    ($first : expr, $second : expr) => {
+        $crate::distinct_or_return!($first, $second, -1)
+    };
+}
+
+/// As `distinct_or_return!`, returning null.
+#[macro_export]
+macro_rules! distinct_or_return_null {
+    ($first : expr, $second : expr) => {
+        $crate::distinct_or_return!($first, $second, std::ptr::null_mut())
+    };
+}
+
+/// Gets a buffer to the caller as out-parameter (returns the length).
+/// Returns -1 if the bytes could not be allocated.
+#[macro_export]
+macro_rules! out_bytes_or_return_int {
+    ($bytes : expr, $out_ptr : expr) => {{
+        let bytes = $bytes;
+        let len = bytes.len() as i64;
+        if !$out_ptr.is_null() {
+            let allocated = $crate::to_c_bytes(bytes);
+            if allocated.is_null() && len > 0 {
+                *$out_ptr = std::ptr::null();
+                return -1;
+            }
+            *$out_ptr = allocated;
+        }
+        len
+    }};
 }
 
 /// If the expression is null, set the last error and return std::ptr::null_mut().
@@ -772,7 +911,7 @@ macro_rules! option_to_c_string {
 #[macro_export]
 macro_rules! bytes_or_return {
     ($ptr:expr, $len:expr, $name:expr, $err_val:expr) => {{
-        match $crate::safe_slice_from_raw_parts($ptr, $len, $name) {
+        match unsafe { $crate::safe_slice_from_raw_parts($ptr, $len, $name) } {
             Ok(slice) => slice,
             Err(err) => {
                 $crate::Error::from(err).set_last();
@@ -826,7 +965,7 @@ macro_rules! cstr_array_or_return {
             loop {
                 if i >= $crate::macros::MAX_STRING_ARRAY_LEN {
                     $crate::Error::new(
-                        2,
+                        "StringTooLong",
                         concat!(
                             stringify!($ptr),
                             ": array exceeds maximum length or missing NULL terminator"
@@ -846,7 +985,7 @@ macro_rules! cstr_array_or_return {
                     Ok(s) => result.push(s.to_owned()),
                     Err(_) => {
                         $crate::Error::new(
-                            2,
+                            "StringTooLong",
                             concat!(stringify!($ptr), ": non-UTF-8 string in array"),
                         )
                         .set_last();
@@ -882,11 +1021,11 @@ macro_rules! cstr_array_or_return_int {
 
 /// Free a pointer that was allocated by cimpl.
 ///
-/// This is a convenience macro wrapper around `cimpl_free` (see [`crate::cimpl_free()`]).
+/// This is a convenience macro wrapper around `cimpl_free` (see [`crate::cimpl_free`]).
 ///
 /// # Returns
 /// - `0` on success
-/// - `-1` on error (see [`crate::cimpl_free()`] for details)
+/// - `-1` on error (see [`crate::cimpl_free`] for details)
 ///
 /// # Error Handling
 ///

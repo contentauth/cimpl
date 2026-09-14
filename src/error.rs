@@ -182,6 +182,12 @@ impl Error {
     }
 
     /// Creates a mutex poisoned error
+    ///
+    /// Note: c2pa_c_ffi (the source of truth this crate is regenerated from)
+    /// removed this constructor once its registry started recovering from
+    /// lock poisoning instead of erroring. It's kept here only because
+    /// `test_mutex_poisoned_error` below exercises it directly and the
+    /// regeneration plan calls for preserving the existing test suite as-is.
     pub fn mutex_poisoned() -> Self {
         Self::new("MutexPoisoned", "thread panic detected")
     }
@@ -194,6 +200,36 @@ impl Error {
     /// Creates a generic "other" error
     pub fn other(msg: impl Into<String>) -> Self {
         Self::new("Other", msg.into())
+    }
+
+    /// Registry call made from a process that did not create the registry
+    /// (happens after `fork()` without an `exec()`).
+    pub fn foreign_process() -> Self {
+        Self::new(
+            "ForeignProcess",
+            "forked child can't access a registry it doesn't own",
+        )
+    }
+
+    /// Handle is tracked as `Arc` and single ownership was demanded through
+    /// the registry, but other clones of `Arc` may exist so single ownership
+    /// can't be guaranteed.
+    pub fn wrong_wrapper_kind() -> Self {
+        Self::new(
+            "WrongWrapperKind",
+            "Arc-backed handle can't have single ownership",
+        )
+    }
+
+    /// A pointer could not be recorded by the registry and was rejected.
+    /// `cause` describes why.
+    pub fn tracking_refused(cause: &str) -> Self {
+        Self::new("TrackingRefused", cause)
+    }
+
+    /// An exclusive borrow is already in-flight for this handle.
+    pub fn pointer_in_use() -> Self {
+        Self::new("PointerInUse", "handle already in (exclusive) use")
     }
 
     /// Peeks at the last error message without clearing it
@@ -286,6 +322,34 @@ mod tests {
         let err = Error::other("custom message");
         assert_eq!(err.variant(), Some("Other"));
         assert_eq!(err.details(), Some("custom message"));
+    }
+
+    #[test]
+    fn test_foreign_process_error() {
+        let err = Error::foreign_process();
+        assert_eq!(err.variant(), Some("ForeignProcess"));
+        assert!(err.details().unwrap().contains("forked child"));
+    }
+
+    #[test]
+    fn test_wrong_wrapper_kind_error() {
+        let err = Error::wrong_wrapper_kind();
+        assert_eq!(err.variant(), Some("WrongWrapperKind"));
+        assert!(err.details().unwrap().contains("single ownership"));
+    }
+
+    #[test]
+    fn test_tracking_refused_error() {
+        let err = Error::tracking_refused("id space of handles exhausted");
+        assert_eq!(err.variant(), Some("TrackingRefused"));
+        assert_eq!(err.details(), Some("id space of handles exhausted"));
+    }
+
+    #[test]
+    fn test_pointer_in_use_error() {
+        let err = Error::pointer_in_use();
+        assert_eq!(err.variant(), Some("PointerInUse"));
+        assert!(err.details().unwrap().contains("already in"));
     }
 
     #[test]

@@ -232,10 +232,8 @@ pub use error::{Error, Result};
 // Convenience alias to avoid name conflicts
 pub use error::Error as CimplError;
 pub use utils::{
-    cimpl_free, safe_slice_from_raw_parts, to_c_bytes, to_c_string, track_arc, track_arc_mutex,
-    track_box, untrack_pointer,
+    checkout_exclusive, checkout_shared, cimpl_free, ensure_trackable, is_safe_buffer_size,
+    safe_slice_from_raw_parts, to_c_bytes, to_c_string, track_arc, track_arc_mutex, track_box,
+    track_string_array, untrack_owned, untrack_owned_pair, ExclusiveCheckout, SharedCheckout,
+    TypedExclusive, TypedShared,
 };
-
-// Re-export internal utilities (for macro use only - not part of public API)
-#[doc(hidden)]
-pub use utils::validate_pointer;
