@@ -1,11 +1,11 @@
 [package]
+edition = "2021"
 name = "cimpl-reference"
 version = "0.3.2"
-edition = "2021"
 
 [lib]
-name = "value_converter"
 crate-type = ["cdylib", "staticlib", "rlib"]
+name = "value_converter"
 
 [features]
 default = ["ffi"]

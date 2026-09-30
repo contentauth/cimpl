@@ -1721,6 +1721,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "wasi"))] // WASI does not support threads
     fn test_concurrent_shared_checkouts_succeed() {
         let ptr = track_box(Box::into_raw(Box::new(42i32)));
         let addr = ptr as usize;
@@ -1755,6 +1756,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "wasi"))] // WASI does not support threads
     fn test_guard_cleans_up_once() {
         static CLEANUPS: AtomicUsize = AtomicUsize::new(0);
         struct Counted;
@@ -1781,6 +1783,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(panic = "unwind")]
     fn test_panicking_cleanup_is_handled() {
         struct Panics;
         impl Drop for Panics {
@@ -1851,6 +1854,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "wasi"))] // WASI does not support threads
     fn test_registry_stays_usable_after_the_lock_is_poisoned() {
         use std::sync::atomic::AtomicBool;
 

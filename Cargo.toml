@@ -1,17 +1,20 @@
 [package]
-name = "cimpl"
-version = "0.4.0"
-description = "Simple C implementations from Rust - FFI utilities and macros for creating safe, ergonomic C bindings"
-edition = "2021"
-authors = ["Gavin Peacock <gpeacock@adobe.com>", "Tania Mathern <tmathern@adobe.com>"]
-license = "MIT OR Apache-2.0"
-readme = "README.md"
-homepage = "https://github.com/contentauth/cimpl"
-repository = "https://github.com/contentauth/cimpl"
-documentation = "https://docs.rs/cimpl"
-keywords = ["ffi", "bindings", "c", "utilities", "macros"]
+authors = [
+  "Gavin Peacock <gpeacock@adobe.com>",
+  "Tania Mathern <tmathern@adobe.com>",
+]
 categories = ["api-bindings", "development-tools::ffi"]
+description = "Simple C implementations from Rust - FFI utilities and macros for creating safe, ergonomic C bindings"
+documentation = "https://docs.rs/cimpl"
+edition = "2021"
+homepage = "https://github.com/contentauth/cimpl"
+keywords = ["ffi", "bindings", "c", "utilities", "macros"]
+license = "MIT OR Apache-2.0"
+name = "cimpl"
+readme = "README.md"
+repository = "https://github.com/contentauth/cimpl"
 rust-version = "1.87"
+version = "0.4.0"
 
 [package.metadata.docs.rs]
 all-features = true
