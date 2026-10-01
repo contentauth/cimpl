@@ -140,12 +140,12 @@
 //!
 //! - [`cstr_or_return!`] - C string to Rust with UTF-8 validation and bounds checking
 //! - [`to_c_string()`] - Rust String to tracked C string
-//! - [`option_to_c_string!`] - Option<String> to C string (NULL if None)
+//! - [`option_to_c_string!`] - `Option<String>` to C string (NULL if None)
 //!
 //! ### Byte Array Handling
 //!
 //! - [`bytes_or_return!`] - Validate and convert C byte arrays
-//! - [`to_c_bytes()`] - Rust Vec<u8> to tracked C byte array
+//! - [`to_c_bytes()`] - Rust `Vec<u8>` to tracked C byte array
 //!
 //! ### Result Handling
 //!
@@ -228,9 +228,8 @@ pub mod utils;
 pub mod macros;
 
 // Re-export main types and functions for convenience
-pub use error::{Error, Result};
 // Convenience alias to avoid name conflicts
-pub use error::Error as CimplError;
+pub use error::{Error as CimplError, Error, Result};
 pub use utils::{
     checkout_exclusive, checkout_shared, cimpl_free, ensure_trackable, is_safe_buffer_size,
     safe_slice_from_raw_parts, to_c_bytes, to_c_string, track_arc, track_arc_mutex, track_box,

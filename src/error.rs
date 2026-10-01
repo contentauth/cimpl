@@ -72,7 +72,6 @@ thread_local! {
 ///     }
 /// }
 /// ```
-///
 #[derive(Debug, Clone)]
 pub struct Error {
     message: String,
@@ -441,6 +440,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "wasi"))] // WASI does not support threads
     fn test_thread_local_isolation() {
         use std::thread;
 
