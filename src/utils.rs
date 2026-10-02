@@ -39,7 +39,6 @@ use crate::{
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
 // ============================================================================
-
 type CleanupFn = Box<dyn FnMut() + Send>;
 
 /// Type for tracked allocations:
@@ -647,7 +646,7 @@ impl PointerRegistry {
     /// Use this whenever an FFI function consumes a tracked pointer via
     /// `Box::from_raw()`: the pointer must be untracked first,
     /// or the registry holds a stale entry that double-frees on
-    /// `cimpl_free()` or reports a false leak at shutdown.
+    /// `cimpl_free()`.
     ///
     /// # When to use
     ///
@@ -855,22 +854,13 @@ impl PointerRegistry {
     }
 }
 
-/// Automatic leak detection at shutdown.
+/// Reports outstanding entries when a registry instance is dropped.
 ///
-/// When the pointer registry is dropped (at program shutdown), it checks for any
-/// tracked pointers that were never freed. This helps identify memory leaks caused
-/// by missing `cimpl_free()` calls in C code.
+/// The global registry is a static and is not dropped at process exit,
+/// so this does not provide automatic shutdown leak reporting.
 ///
-/// # Example Output
-///
-/// ```text
-/// ⚠️  WARNING: 3 pointer(s) were not freed at shutdown!
-/// This indicates C code did not properly free all allocated pointers.
-/// Each pointer should be freed exactly once with cimpl_free().
-/// ```
-///
-/// This detection runs in **all builds** (debug, release, and test) to help catch
-/// memory management bugs during development and integration testing.
+/// Cleanup is canceled for remaining entries to avoid destroying objects
+/// that callers may still reference.
 impl Drop for PointerRegistry {
     fn drop(&mut self) {
         if self.owner_pid != current_pid() {
@@ -1124,7 +1114,7 @@ pub fn untrack_owned<T: 'static>(ptr: *mut T) -> Result<T, Error> {
 ///     // Handle error
 /// }
 /// ```
-pub extern "C" fn cimpl_free(ptr: *mut std::ffi::c_void) -> i32 {
+pub fn cimpl_free(ptr: *mut std::ffi::c_void) -> i32 {
     match get_registry().free(ptr as usize) {
         Ok(()) => 0,
         Err(error) => {
