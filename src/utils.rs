@@ -331,7 +331,7 @@ impl Drop for EntryInner {
         {
             // Catch so there is no panic in another registry (could poison the lock).
             if std::panic::catch_unwind(AssertUnwindSafe(&mut cleanup)).is_err() {
-                eprintln!("c2pa: panic while freeing a tracked pointer, leaking pointer");
+                eprintln!("cimpl: panic while freeing a tracked pointer, leaking pointer");
             }
         }
     }
@@ -511,7 +511,7 @@ impl PointerRegistry {
         // Make sure the counter can still hand out unique ids.
         if counter >= (usize::MAX >> 1) || self.id_space_exhausted.load(Ordering::Relaxed) {
             self.id_space_exhausted.store(true, Ordering::Relaxed);
-            eprintln!("c2pa: PointerRegistry id space exhausted");
+            eprintln!("cimpl: PointerRegistry id space exhausted");
             Error::tracking_refused("handle id space exhausted").set_last();
             return None;
         }
@@ -529,7 +529,7 @@ impl PointerRegistry {
             // Ids come from a counter that never repeats within its period,
             // so an occupied slot means that guarantee broke.
             previous.cancel_cleanup();
-            eprintln!("c2pa: handle id 0x{id:x} was minted twice, leaking the displaced object");
+            eprintln!("cimpl: handle id 0x{id:x} was minted twice, leaking the displaced object");
         }
         Some(id)
     }
@@ -546,7 +546,7 @@ impl PointerRegistry {
         if real_addr != 0 {
             // Handles and addresses should not be able to alias each other.
             if !real_addr.is_multiple_of(2) {
-                eprintln!("c2pa: odd address can not be tracked");
+                eprintln!("cimpl: odd address can not be tracked");
                 Error::tracking_refused("buffer address could collide with a handle id").set_last();
                 return false;
             }
@@ -562,7 +562,7 @@ impl PointerRegistry {
             if let Some(previous) = tracked.insert(real_addr, entry) {
                 // Something already freed the memory.
                 previous.cancel_cleanup();
-                eprintln!("c2pa: attempt to retrack an already tracked address");
+                eprintln!("cimpl: attempt to retrack an already tracked address");
             }
             return true;
         }
