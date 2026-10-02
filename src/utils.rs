@@ -25,11 +25,16 @@ use std::{
     ops::{Deref, DerefMut},
     os::raw::c_uchar,
     panic::AssertUnwindSafe,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex, PoisonError, Weak,
-    },
+    sync::{atomic::AtomicBool, Arc, Mutex, PoisonError, Weak},
 };
+
+// The reader/writer state machine on `EntryInner::borrow_state` is checked
+// exhaustively under loom (see `loom_tests`), so it must run on loom's
+// atomics there instead of `std`'s.
+#[cfg(loom)]
+use loom::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(not(loom))]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
     error::Error,
@@ -123,11 +128,68 @@ const WRITER_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 #[cfg(not(target_arch = "wasm32"))]
 const READER_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
 
+/// Under loom, wall-clock deadlines would make model exploration
+/// non-deterministic, so a bounded number of yields stands in for
+/// `WRITER_WAIT`/`READER_WAIT` instead.
+#[cfg(loom)]
+const LOOM_MAX_SPINS: usize = 10;
+
+/// How much longer a caller may keep retrying a CAS loop before giving up.
+/// A wall-clock deadline outside loom, a bounded spin count under loom
+/// (loom doesn't advance wall-clock time, so a real deadline would never
+/// trip, and reading it would make model exploration non-deterministic).
+#[cfg(not(target_arch = "wasm32"))]
+struct WaitBudget {
+    #[cfg(not(loom))]
+    deadline: std::time::Instant,
+    #[cfg(loom)]
+    remaining: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl WaitBudget {
+    #[cfg(not(loom))]
+    fn new(duration: std::time::Duration) -> Self {
+        Self {
+            deadline: std::time::Instant::now() + duration,
+        }
+    }
+
+    #[cfg(loom)]
+    fn new(_duration: std::time::Duration) -> Self {
+        Self {
+            remaining: LOOM_MAX_SPINS,
+        }
+    }
+
+    /// Yields once and returns `true` if the budget is exhausted
+    /// and the caller should give up.
+    fn tick(&mut self) -> bool {
+        #[cfg(not(loom))]
+        {
+            if std::time::Instant::now() >= self.deadline {
+                return true;
+            }
+            std::thread::yield_now();
+            false
+        }
+        #[cfg(loom)]
+        {
+            if self.remaining == 0 {
+                return true;
+            }
+            self.remaining -= 1;
+            loom::thread::yield_now();
+            false
+        }
+    }
+}
+
 impl EntryInner {
     /// Take a shared borrow (with timeout, errors if timing out).
     fn try_borrow_shared(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
-        let deadline = std::time::Instant::now() + READER_WAIT;
+        let mut budget = WaitBudget::new(READER_WAIT);
         let mut current = self.borrow_state.load(Ordering::Acquire);
         loop {
             if current == EXCLUSIVE || current & WRITER_PENDING != 0 {
@@ -135,10 +197,9 @@ impl EntryInner {
                 return false;
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    if std::time::Instant::now() >= deadline {
+                    if budget.tick() {
                         return false;
                     }
-                    std::thread::yield_now();
                     current = self.borrow_state.load(Ordering::Acquire);
                     continue;
                 }
@@ -178,7 +239,7 @@ impl EntryInner {
     /// Even on wasm32, we may need to wait for draining readers.
     #[cfg(not(target_arch = "wasm32"))]
     fn try_borrow_exclusive_slow(&self) -> bool {
-        let deadline = std::time::Instant::now() + WRITER_WAIT;
+        let mut budget = WaitBudget::new(WRITER_WAIT);
         let mut owns_pending = false;
         let mut current = self.borrow_state.load(Ordering::Acquire);
         loop {
@@ -230,8 +291,8 @@ impl EntryInner {
                     }
                 }
             }
-            // Wait for deadline...
-            if std::time::Instant::now() >= deadline {
+            // Wait for the budget to run out...
+            if budget.tick() {
                 if owns_pending {
                     // Let readers read again.
                     self.borrow_state
@@ -239,7 +300,6 @@ impl EntryInner {
                 }
                 return false;
             }
-            std::thread::yield_now();
             current = self.borrow_state.load(Ordering::Acquire);
         }
     }
@@ -1405,7 +1465,7 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
     ptr
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod tests {
     use super::*;
 
@@ -1885,5 +1945,231 @@ mod tests {
             freed.load(Ordering::SeqCst),
             "cleanup must run when a handle is freed after poisoning"
         );
+    }
+
+    /// Hammer test: many threads race shared checkouts, exclusive checkouts,
+    /// and free+retrack against a shared pool of handles at once.
+    ///
+    /// Unlike `test_concurrent_shared_checkouts_succeed` (shared-only), this
+    /// exercises every combination the registry has to arbitrate between:
+    /// shared-vs-shared, shared-vs-exclusive, exclusive-vs-exclusive, and a
+    /// `cimpl_free` racing against any of those. Correctness is checked two
+    /// ways: `a == b` inside every successful borrow (an exclusive writer
+    /// updates both fields non-atomically, so a torn write or two writers
+    /// active at once would show up as `a != b` under a later borrow), and a
+    /// global created/dropped tally (a double-free or a leaked cleanup would
+    /// throw the two counts out of sync).
+    #[test]
+    fn test_hammer_mixed_shared_exclusive_and_free() {
+        use std::hash::{Hash, Hasher};
+
+        const POOL_SIZE: usize = 16;
+        const THREADS: usize = 8;
+        const ITERS_PER_THREAD: usize = 2_000;
+
+        static CREATED: AtomicUsize = AtomicUsize::new(0);
+        static DROPPED: AtomicUsize = AtomicUsize::new(0);
+        static NEXT_VALUE: AtomicUsize = AtomicUsize::new(1);
+        CREATED.store(0, Ordering::SeqCst);
+        DROPPED.store(0, Ordering::SeqCst);
+        NEXT_VALUE.store(1, Ordering::SeqCst);
+
+        struct Paired {
+            a: u64,
+            b: u64,
+        }
+
+        impl Paired {
+            fn new() -> Self {
+                CREATED.fetch_add(1, Ordering::Relaxed);
+                Paired { a: 0, b: 0 }
+            }
+        }
+
+        impl Drop for Paired {
+            fn drop(&mut self) {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        fn new_handle() -> usize {
+            track_box(Box::into_raw(Box::new(Paired::new()))) as usize
+        }
+
+        // Dependency-free pseudo-randomness: hash (thread, iteration, salt).
+        fn cheap_rand(thread_idx: usize, iter: usize, salt: u64) -> u64 {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (thread_idx, iter, salt).hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let pool: Vec<AtomicUsize> = (0..POOL_SIZE)
+            .map(|_| AtomicUsize::new(new_handle()))
+            .collect();
+        let pool_ref = &pool;
+
+        std::thread::scope(|scope| {
+            for thread_idx in 0..THREADS {
+                scope.spawn(move || {
+                    for iter in 0..ITERS_PER_THREAD {
+                        let slot = (cheap_rand(thread_idx, iter, 1) as usize) % POOL_SIZE;
+                        let handle = pool_ref[slot].load(Ordering::Acquire);
+                        if handle == 0 {
+                            continue; // another thread is mid free+retrack
+                        }
+                        let ptr = handle as *mut Paired;
+
+                        match cheap_rand(thread_idx, iter, 2) % 100 {
+                            0..=4 => {
+                                // Only the thread that wins the CAS owns freeing
+                                // this exact handle value, so this can never
+                                // double-free even though other threads may
+                                // still be racing a checkout against it.
+                                if pool_ref[slot]
+                                    .compare_exchange(
+                                        handle,
+                                        0,
+                                        Ordering::AcqRel,
+                                        Ordering::Acquire,
+                                    )
+                                    .is_ok()
+                                {
+                                    assert_eq!(
+                                        cimpl_free(ptr as *mut std::ffi::c_void),
+                                        0,
+                                        "the CAS winner's handle must still be tracked"
+                                    );
+                                    pool_ref[slot].store(new_handle(), Ordering::Release);
+                                }
+                            }
+                            5..=49 => {
+                                if let Ok(guard) = checkout_shared::<Paired>(ptr) {
+                                    assert_eq!(
+                                        guard.a, guard.b,
+                                        "torn read or overlapping writer under a shared borrow"
+                                    );
+                                }
+                            }
+                            _ => {
+                                if let Ok(mut guard) = checkout_exclusive::<Paired>(ptr) {
+                                    let value = NEXT_VALUE.fetch_add(1, Ordering::Relaxed) as u64;
+                                    guard.a = value;
+                                    std::thread::yield_now();
+                                    guard.b = value;
+                                    assert_eq!(
+                                        guard.a, guard.b,
+                                        "own write clobbered by another exclusive borrow"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        // No guard can outlive the iteration that created it, so every
+        // remaining pool entry is still tracked once every thread has joined.
+        for slot in pool.iter() {
+            let handle = slot.load(Ordering::Acquire);
+            if handle != 0 {
+                assert_eq!(cimpl_free(handle as *mut std::ffi::c_void), 0);
+            }
+        }
+
+        assert_eq!(
+            CREATED.load(Ordering::Relaxed),
+            DROPPED.load(Ordering::Relaxed),
+            "every created object must be dropped exactly once: no leaks, no double frees"
+        );
+    }
+}
+
+/// Exhaustively checks the `borrow_state` CAS state machine under every
+/// thread interleaving loom can enumerate.
+///
+/// Run with:
+/// `RUSTFLAGS="--cfg loom" cargo test --lib --release loom_tests`
+/// (release mode matters: loom's exploration is slow enough that a debug
+/// build can take a very long time on these tests).
+#[cfg(all(test, loom))]
+mod loom_tests {
+    use loom::{cell::UnsafeCell, sync::Arc, thread};
+
+    use super::*;
+
+    /// A bare `EntryInner`, built directly rather than through the registry,
+    /// so the borrow state machine can be exercised in isolation.
+    fn new_entry() -> EntryInner {
+        EntryInner {
+            real_addr: 0,
+            type_id: TypeId::of::<()>(),
+            wrapper: Wrapper::Boxed,
+            borrow_state: AtomicUsize::new(0),
+            cleanup: Mutex::new(None),
+            owner_pid: 0,
+        }
+    }
+
+    /// One writer, one reader, racing on the same handle. `protected` stands
+    /// in for the real `T` behind the handle: a shared borrow may only read
+    /// it, an exclusive borrow may only write it. If `try_borrow_shared` and
+    /// `try_borrow_exclusive` ever let both run at once, loom's `UnsafeCell`
+    /// panics on the conflicting access instead of silently corrupting data.
+    #[test]
+    fn exclusive_excludes_shared() {
+        loom::model(|| {
+            let entry = Arc::new(new_entry());
+            let protected = Arc::new(UnsafeCell::new(0usize));
+
+            let writer = {
+                let entry = entry.clone();
+                let protected = protected.clone();
+                thread::spawn(move || {
+                    if entry.try_borrow_exclusive() {
+                        unsafe { protected.with_mut(|p| *p = 42) };
+                        entry.borrow_state.store(0, Ordering::Release);
+                    }
+                })
+            };
+
+            if entry.try_borrow_shared() {
+                unsafe { protected.with(|p| *p) };
+                entry.borrow_state.fetch_sub(1, Ordering::AcqRel);
+            }
+
+            writer.join().unwrap();
+        });
+    }
+
+    /// Two writers racing for the same handle: at most one may hold the
+    /// exclusive borrow at a time, so their writes to `protected` must never
+    /// overlap. `try_borrow_exclusive` is allowed to give up under
+    /// contention (see `WaitBudget`); losing the race is fine, aliasing the
+    /// resource is not.
+    #[test]
+    fn exclusive_excludes_exclusive() {
+        loom::model(|| {
+            let entry = Arc::new(new_entry());
+            let protected = Arc::new(UnsafeCell::new(0usize));
+
+            let other = {
+                let entry = entry.clone();
+                let protected = protected.clone();
+                thread::spawn(move || {
+                    if entry.try_borrow_exclusive() {
+                        unsafe { protected.with_mut(|p| *p = 1) };
+                        entry.borrow_state.store(0, Ordering::Release);
+                    }
+                })
+            };
+
+            if entry.try_borrow_exclusive() {
+                unsafe { protected.with_mut(|p| *p = 2) };
+                entry.borrow_state.store(0, Ordering::Release);
+            }
+
+            other.join().unwrap();
+        });
     }
 }

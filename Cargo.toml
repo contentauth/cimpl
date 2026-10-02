@@ -19,6 +19,10 @@ version = "0.4.0"
 [package.metadata.docs.rs]
 all-features = true
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [dependencies]
 
 [dev-dependencies]
+loom = "0.7"
