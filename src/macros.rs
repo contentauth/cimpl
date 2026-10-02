@@ -410,7 +410,7 @@ macro_rules! box_tracked {
 macro_rules! arc_tracked {
     ($expr:expr) => {{
         let obj = $expr;
-        let ptr = Arc::into_raw(Arc::new(obj)) as *mut _;
+        let ptr = std::sync::Arc::into_raw(std::sync::Arc::new(obj)) as *mut _;
         $crate::track_arc(ptr)
     }};
 }
@@ -1050,4 +1050,21 @@ macro_rules! cimpl_free {
     ($ptr:expr) => {
         $crate::cimpl_free($ptr as *mut _)
     };
+}
+
+#[cfg(test)]
+mod tests {
+    // `test_arc_tracked_expands_without_arc_import` tests that a fully qualified Arc name compiles.
+    // So we can't import Arc here either.
+
+    #[test]
+    fn test_arc_tracked_expands_without_arc_import() {
+        let pointer: *mut i32 = crate::arc_tracked!(5i32);
+        assert!(!pointer.is_null());
+        {
+            let value = crate::checkout_shared::<i32>(pointer).expect("new handle OK");
+            assert_eq!(*value, 5);
+        }
+        assert_eq!(crate::cimpl_free(pointer as *mut std::ffi::c_void), 0);
+    }
 }
