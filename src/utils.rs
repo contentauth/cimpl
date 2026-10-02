@@ -1077,9 +1077,10 @@ pub fn untrack_owned<T: 'static>(ptr: *mut T) -> Result<T, Error> {
 
 /// Universal free function for any tracked pointer
 ///
-/// This is the universal free function exposed to C. It works for ANY pointer
-/// that was allocated and tracked through cimpl, regardless of the wrapper type
-/// (Box, Arc, etc.) or the underlying Rust type.
+/// Works for ANY pointer that was allocated and tracked through cimpl, regardless
+/// of the wrapper type (Box, Arc, etc.) or the underlying Rust type. It is a Rust
+/// function; each library exposes it to C through its own `#[no_mangle]` wrapper
+/// (see `mylib_free` in the crate docs).
 ///
 /// # Returns
 /// - `0` on success
@@ -1123,7 +1124,6 @@ pub fn untrack_owned<T: 'static>(ptr: *mut T) -> Result<T, Error> {
 ///     // Handle error
 /// }
 /// ```
-#[no_mangle]
 pub extern "C" fn cimpl_free(ptr: *mut std::ffi::c_void) -> i32 {
     match get_registry().free(ptr as usize) {
         Ok(()) => 0,
