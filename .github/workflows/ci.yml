@@ -135,7 +135,8 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation toolset
-        run: cargo install cross --locked
+        # Includes the rustup toolchain-detection fix and regression tests.
+        run: cargo install cross --locked --git https://github.com/cross-rs/cross --rev 2332ad818a3cd763934d7ac14857ed60b7ca8e90
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -202,7 +203,8 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation toolset
-        run: cargo install cross --locked
+        # Includes the rustup toolchain-detection fix and regression tests.
+        run: cargo install cross --locked --git https://github.com/cross-rs/cross --rev 2332ad818a3cd763934d7ac14857ed60b7ca8e90
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
