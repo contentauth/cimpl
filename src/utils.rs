@@ -39,7 +39,6 @@ use crate::{
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
 // ============================================================================
-
 type CleanupFn = Box<dyn FnMut() + Send>;
 
 /// Type for tracked allocations:
@@ -331,7 +330,7 @@ impl Drop for EntryInner {
         {
             // Catch so there is no panic in another registry (could poison the lock).
             if std::panic::catch_unwind(AssertUnwindSafe(&mut cleanup)).is_err() {
-                eprintln!("c2pa: panic while freeing a tracked pointer, leaking pointer");
+                eprintln!("cimpl: panic while freeing a tracked pointer, leaking pointer");
             }
         }
     }
@@ -511,7 +510,7 @@ impl PointerRegistry {
         // Make sure the counter can still hand out unique ids.
         if counter >= (usize::MAX >> 1) || self.id_space_exhausted.load(Ordering::Relaxed) {
             self.id_space_exhausted.store(true, Ordering::Relaxed);
-            eprintln!("c2pa: PointerRegistry id space exhausted");
+            eprintln!("cimpl: PointerRegistry id space exhausted");
             Error::tracking_refused("handle id space exhausted").set_last();
             return None;
         }
@@ -529,7 +528,7 @@ impl PointerRegistry {
             // Ids come from a counter that never repeats within its period,
             // so an occupied slot means that guarantee broke.
             previous.cancel_cleanup();
-            eprintln!("c2pa: handle id 0x{id:x} was minted twice, leaking the displaced object");
+            eprintln!("cimpl: handle id 0x{id:x} was minted twice, leaking the displaced object");
         }
         Some(id)
     }
@@ -546,7 +545,7 @@ impl PointerRegistry {
         if real_addr != 0 {
             // Handles and addresses should not be able to alias each other.
             if !real_addr.is_multiple_of(2) {
-                eprintln!("c2pa: odd address can not be tracked");
+                eprintln!("cimpl: odd address can not be tracked");
                 Error::tracking_refused("buffer address could collide with a handle id").set_last();
                 return false;
             }
@@ -562,7 +561,7 @@ impl PointerRegistry {
             if let Some(previous) = tracked.insert(real_addr, entry) {
                 // Something already freed the memory.
                 previous.cancel_cleanup();
-                eprintln!("c2pa: attempt to retrack an already tracked address");
+                eprintln!("cimpl: attempt to retrack an already tracked address");
             }
             return true;
         }
@@ -647,7 +646,7 @@ impl PointerRegistry {
     /// Use this whenever an FFI function consumes a tracked pointer via
     /// `Box::from_raw()`: the pointer must be untracked first,
     /// or the registry holds a stale entry that double-frees on
-    /// `cimpl_free()` or reports a false leak at shutdown.
+    /// `cimpl_free()`.
     ///
     /// # When to use
     ///
@@ -855,22 +854,13 @@ impl PointerRegistry {
     }
 }
 
-/// Automatic leak detection at shutdown.
+/// Reports outstanding entries when a registry instance is dropped.
 ///
-/// When the pointer registry is dropped (at program shutdown), it checks for any
-/// tracked pointers that were never freed. This helps identify memory leaks caused
-/// by missing `cimpl_free()` calls in C code.
+/// The global registry is a static and is not dropped at process exit,
+/// so this does not provide automatic shutdown leak reporting.
 ///
-/// # Example Output
-///
-/// ```text
-/// ⚠️  WARNING: 3 pointer(s) were not freed at shutdown!
-/// This indicates C code did not properly free all allocated pointers.
-/// Each pointer should be freed exactly once with cimpl_free().
-/// ```
-///
-/// This detection runs in **all builds** (debug, release, and test) to help catch
-/// memory management bugs during development and integration testing.
+/// Cleanup is canceled for remaining entries to avoid destroying objects
+/// that callers may still reference.
 impl Drop for PointerRegistry {
     fn drop(&mut self) {
         if self.owner_pid != current_pid() {
@@ -1077,9 +1067,10 @@ pub fn untrack_owned<T: 'static>(ptr: *mut T) -> Result<T, Error> {
 
 /// Universal free function for any tracked pointer
 ///
-/// This is the universal free function exposed to C. It works for ANY pointer
-/// that was allocated and tracked through cimpl, regardless of the wrapper type
-/// (Box, Arc, etc.) or the underlying Rust type.
+/// Works for ANY pointer that was allocated and tracked through cimpl, regardless
+/// of the wrapper type (Box, Arc, etc.) or the underlying Rust type. It is a Rust
+/// function; each library exposes it to C through its own `#[no_mangle]` wrapper
+/// (see `mylib_free` in the crate docs).
 ///
 /// # Returns
 /// - `0` on success
@@ -1123,8 +1114,7 @@ pub fn untrack_owned<T: 'static>(ptr: *mut T) -> Result<T, Error> {
 ///     // Handle error
 /// }
 /// ```
-#[no_mangle]
-pub extern "C" fn cimpl_free(ptr: *mut std::ffi::c_void) -> i32 {
+pub fn cimpl_free(ptr: *mut std::ffi::c_void) -> i32 {
     match get_registry().free(ptr as usize) {
         Ok(()) => 0,
         Err(error) => {

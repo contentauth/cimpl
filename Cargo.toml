@@ -13,8 +13,8 @@ license = "MIT OR Apache-2.0"
 name = "cimpl"
 readme = "README.md"
 repository = "https://github.com/contentauth/cimpl"
-rust-version = "1.87"
-version = "0.4.0"
+rust-version = "1.96.0"
+version = "0.4.1"
 
 [package.metadata.docs.rs]
 all-features = true

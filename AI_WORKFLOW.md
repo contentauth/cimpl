@@ -86,6 +86,37 @@ pub extern "C" fn vc_to_string(ptr: *mut ValueConverter) -> *mut c_char {
 
 See `examples/reference/` for a complete implementation of this pattern.
 
+## Required FFI Safety and Ownership Rules
+
+### Export a Library-Specific Free Function
+
+**Important:** `cimpl::cimpl_free()` is a Rust function, not an exported
+`#[no_mangle]` C ABI function. Each consuming library must export its own
+library-prefixed wrapper, as in `examples/reference/src/ffi.rs`:
+
+```rust
+use std::ffi::c_void;
+
+#[no_mangle]
+pub extern "C" fn vc_free(ptr: *mut c_void) -> i32 {
+    cimpl::cimpl_free(ptr)
+}
+```
+
+Use the consuming library's prefix instead of `vc`. Preserve the `i32` return
+value. Callers must release cimpl-tracked objects, strings, and byte arrays
+through the allocating library's free function, not C `free()` or an untracked
+Rust deallocator. The `cimpl_free!` macro does not export a C ABI symbol either.
+
+### Keep Panics Out of the C ABI
+
+Do not use `panic!()`, `unwrap()`, or `expect()` for recoverable failures in
+exported FFI functions. Handle errors with the existing cimpl macros, record the
+last error, and return the function's documented error value. Panics must not
+unwind across the C ABI boundary.
+
+See `PHILOSOPHY.md` for the ownership and error-handling rationale.
+
 ## Common Anti-Patterns to AVOID
 
 ### DON'T: Manual null checks

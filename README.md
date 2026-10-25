@@ -2,7 +2,7 @@
 
 **Simple C implementations from Rust**
 
-Create clean, safe C FFI bindings that AI can automatically convert to any language.
+Create clean, safe C FFI bindings for Rust that AI can automatically convert to any language. 
 
 [![Crates.io](https://img.shields.io/crates/v/cimpl.svg)](https://crates.io/crates/cimpl)
 [![Documentation](https://docs.rs/cimpl/badge.svg)](https://docs.rs/cimpl)
@@ -18,9 +18,11 @@ Rust + cimpl → Clean C API → AI-powered bindings → All languages
 
 Write your library once in safe Rust, expose it through a clean C API, and let AI generate high-quality bindings for Python, JavaScript, Lua, Ruby, C#, Java, Go, and more.
 
+There is no special binding language and you don't have to annotate your code. This is important when you need to support more than one language.
+
 ## Why cimpl?
 
-Most Rust FFI examples show trivial toy code:
+Most Rust FFI examples are trivial examples:
 ```rust
 #[no_mangle]
 pub extern "C" fn add(a: i32, b: i32) -> i32 { a + b }
@@ -33,7 +35,7 @@ pub extern "C" fn add(a: i32, b: i32) -> i32 { a + b }
 - How do you prevent memory leaks and double-frees?
 - How do you make errors usable in other languages?
 
-**cimpl solves the hard problems:**
+**cimpl helps with the hard problems:**
 - Type-safe pointer tracking with validation
 - Automatic error handling with descriptive, parseable messages
 - Memory leak detection in tests
@@ -84,7 +86,7 @@ pub extern "C" fn vc_free(ptr: *mut c_void) -> i32 {
 }
 ```
 
-**That's it!** From this simple code:
+**That's it!** From this code:
 - cbindgen generates a C header with proper namespace prefix
 - Type validation ensures safety
 - Errors map to descriptive strings: `"VariantName: details"`
@@ -136,6 +138,7 @@ except OutOfRangeError as e:
 - **Shared registry** across all cimpl-based libraries
 - **Double-free protection**
 - **Type mismatch detection**
+- **Allocation tracking with double-free and type-mismatch detection**
 
 ### Error Handling
 - **String-based error messages** with consistent `"VariantName: details"` format
@@ -184,7 +187,7 @@ cbindgen = "0.27"
 - **Multiple constructors**: `from_i32()`, `from_string()`, `from_hex()`, etc.
 - **Fallible conversions**: `to_i32()` might fail (wrong size), `to_string()` might fail (invalid UTF-8)
 - **Proper validation**: Size limits, UTF-8 checks, overflow detection
-- **Memory safety**: Tracked allocations, type validation, leak detection
+- **Memory safety**: Tracked allocations, type validation
 - **Clear separation**: `lib.rs` (pure Rust API) vs `ffi.rs` (C FFI wrapper)
 
 **Two-file structure:**
@@ -197,7 +200,7 @@ See [examples/reference/README.md](./examples/reference/README.md) for detailed 
 
 ## Real-World Use
 
-A variation of this pattern used in production at Adobe for the [C2PA project](https://github.com/contentauth/c2pa-rs), providing C, Python, and other language bindings from a single Rust codebase.
+This is used in production for the [C2PA project](https://github.com/contentauth/c2pa-rs), providing C++, Python, Swift, Kotlin and other language bindings from a single Rust codebase.
 
 ## Contributing
 
@@ -210,3 +213,8 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
+
+[GitHub repository](https://github.com/contentauth/cimpl)
+
+
+
