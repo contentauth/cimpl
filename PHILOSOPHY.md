@@ -358,6 +358,17 @@ pub extern "C" fn create_object() -> *mut MyObject {
 
 All tracked allocations can be freed with library-specific `*_free()` functions that wrap `cimpl::cimpl_free()`.
 
+`to_c_bytes` transfers an even-addressed `Vec<u8>` allocation to the registry
+without copying or shrinking. The original length and capacity are retained
+until release, including any spare capacity; C callers receive a read-only
+pointer and must not use C `free()`. Odd addresses are reserved for opaque
+handle IDs, so an odd-addressed vector still requires a copy into an
+even-addressed buffer. The registry releases each allocation using its own
+original owner or allocation layout, not a foreign allocator.
+For transferred vectors, the cleanup closure reconstructs the original raw
+parts only when invoked. Dropping a cancelled closure must not free the
+allocation, preserving the registry's ownership-transfer and fork-safety rules.
+
 ## What Makes a Good C API?
 
 ### DO: Keep it Simple

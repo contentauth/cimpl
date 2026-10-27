@@ -1355,21 +1355,60 @@ pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
 /// Converts a `Vec <u8>` to a tracked C byte array pointer
 ///
 /// The returned pointer is tracked for allocation safety and MUST be freed
-/// by calling `free_c_bytes`.
+/// through the allocating library's wrapper around [`cimpl_free`].
+///
+/// Even-addressed allocations are transferred without copying or shrinking.
+/// The registry retains the original length and capacity for release.
+/// Odd-addressed allocations are copied into an even-addressed
+/// buffer to avoid collisions with opaque handle IDs.
 ///
 /// # Arguments
 /// * `bytes` - The byte vector to convert
 ///
 /// # Returns
-/// * `*const c_uchar` - Pointer to the byte array, or null if the vector is empty
+/// * `*const c_uchar` - Read-only pointer to the byte array, or null if the
+///   vector is empty, allocation fails, or tracking is refused.
 ///
 /// # Safety
-/// The returned pointer must be freed exactly once by calling `free_c_bytes`.
+/// The returned pointer must be freed exactly once through the allocating
+/// library's free function, never through C `free`.
 /// Returns null for empty vectors to avoid dangling pointers from zero-sized allocations.
 pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
+    if bytes.is_empty() {
+        return std::ptr::null();
+    }
+    to_c_bytes_with(bytes, get_registry(), |addr| addr.is_multiple_of(2))
+}
+
+fn to_c_bytes_with(
+    bytes: Vec<u8>,
+    registry: &PointerRegistry,
+    is_even: impl FnOnce(usize) -> bool,
+) -> *const c_uchar {
     let len = bytes.len();
     if len == 0 {
         return std::ptr::null();
+    }
+
+    let ptr = bytes.as_ptr();
+    let addr = ptr.expose_provenance();
+    if is_even(addr) {
+        let cap = bytes.capacity();
+        let bytes = std::mem::ManuallyDrop::new(bytes);
+        // SAFETY: these are the Vec's original raw parts. Cleanup runs at most
+        // once; merely dropping a cancelled closure must not free the buffer.
+        let cleanup = Box::new(move || unsafe {
+            drop(Vec::from_raw_parts(
+                std::ptr::with_exposed_provenance_mut::<u8>(addr),
+                len,
+                cap,
+            ));
+        });
+        if !registry.track_by_address(addr, TypeId::of::<ByteBuffer>(), cleanup) {
+            drop(std::mem::ManuallyDrop::into_inner(bytes));
+            return std::ptr::null();
+        }
+        return ptr;
     }
 
     let ptr = alloc_even_buffer(&bytes, false);
@@ -1379,7 +1418,7 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
     }
     drop(bytes);
     let ptr_val = ptr.expose_provenance();
-    let tracked = get_registry().track_by_address(
+    let tracked = registry.track_by_address(
         ptr_val,
         TypeId::of::<ByteBuffer>(),
         // SAFETY: ptr_val is this allocation's exposed address and len its
@@ -1469,6 +1508,116 @@ mod tests {
 
         // Clean up
         cimpl_free(ptr as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_to_c_bytes_preserves_allocation_with_spare_capacity() {
+        for capacity in [5, 64, 4096] {
+            let mut bytes = Vec::with_capacity(capacity);
+            bytes.extend_from_slice(&[1, 2, 3, 4, 5]);
+            let original = bytes.as_ptr();
+            let ptr = to_c_bytes(bytes);
+            assert!(!ptr.is_null());
+            if (original as usize).is_multiple_of(2) {
+                assert_eq!(ptr, original);
+            } else {
+                assert_ne!(ptr, original);
+            }
+            assert!((ptr as usize).is_multiple_of(2));
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(ptr, 5) },
+                [1, 2, 3, 4, 5]
+            );
+            assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
+        }
+    }
+
+    #[test]
+    fn test_to_c_bytes_even_buffer_fallback() {
+        let registry = PointerRegistry::new();
+        let bytes = vec![1, 2, 3, 4, 5];
+        let original = bytes.as_ptr();
+        Error::take_last();
+        let ptr = to_c_bytes_with(bytes, &registry, |_| false);
+        assert!(!ptr.is_null());
+        assert_ne!(ptr, original);
+        assert!((ptr as usize).is_multiple_of(2));
+        assert_eq!(
+            unsafe { std::slice::from_raw_parts(ptr, 5) },
+            [1, 2, 3, 4, 5]
+        );
+        assert!(Error::take_last().is_none());
+        assert!(registry.free(ptr as usize).is_ok());
+        assert!(registry.free(ptr as usize).is_err());
+    }
+
+    #[test]
+    fn test_to_c_bytes_empty() {
+        for capacity in [0, 4096] {
+            Error::take_last();
+            assert!(to_c_bytes(Vec::with_capacity(capacity)).is_null());
+            assert!(Error::take_last().is_none());
+        }
+    }
+
+    #[test]
+    fn test_to_c_bytes_cancelled_cleanup_preserves_allocation() {
+        for capacity in [3, 64, 4096] {
+            let registry = PointerRegistry::new();
+            let mut bytes = Vec::with_capacity(capacity);
+            bytes.extend_from_slice(&[1, 2, 3]);
+            let cap = bytes.capacity();
+            let original = bytes.as_ptr();
+            let ptr = to_c_bytes_with(bytes, &registry, |addr| addr.is_multiple_of(2));
+            assert!(!ptr.is_null());
+            registry
+                .untrack(ptr as usize, TypeId::of::<ByteBuffer>(), None)
+                .unwrap();
+            assert_eq!(unsafe { std::slice::from_raw_parts(ptr, 3) }, [1, 2, 3]);
+            if ptr == original {
+                unsafe { drop(Vec::from_raw_parts(ptr.cast_mut(), 3, cap)) };
+            } else {
+                unsafe { dealloc_even_buffer(ptr.expose_provenance(), 3) };
+            }
+        }
+    }
+
+    #[test]
+    fn test_to_c_bytes_tracking_refused() {
+        let mut registry = PointerRegistry::new();
+        registry.owner_pid = current_pid().wrapping_add(1);
+        for handoff in [true, false] {
+            Error::take_last();
+            let mut bytes = Vec::with_capacity(4096);
+            bytes.extend_from_slice(&[1, 2, 3]);
+            assert!(to_c_bytes_with(bytes, &registry, |_| handoff).is_null());
+            assert!(Error::take_last().is_some());
+            assert!(registry.tracked.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "wasi"))]
+    fn test_to_c_bytes_release_on_another_thread() {
+        let ptr = to_c_bytes(vec![1, 2, 3, 4, 5]);
+        assert!(!ptr.is_null());
+        let addr = ptr.expose_provenance();
+        std::thread::spawn(move || {
+            assert_eq!(cimpl_free(std::ptr::with_exposed_provenance_mut(addr)), 0);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn test_to_c_bytes_local_registry_rejects_double_free_and_untracked_pointer() {
+        let registry = PointerRegistry::new();
+        let ptr = to_c_bytes_with(vec![1, 2, 3], &registry, |addr| addr.is_multiple_of(2));
+        assert!(!ptr.is_null());
+        assert!(registry.free(ptr as usize).is_ok());
+        assert!(registry.free(ptr as usize).is_err());
+        let untracked = [1u8, 2, 3];
+        assert!(registry.free(untracked.as_ptr() as usize).is_err());
     }
 
     #[test]
