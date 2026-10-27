@@ -108,6 +108,16 @@ value. Callers must release cimpl-tracked objects, strings, and byte arrays
 through the allocating library's free function, not C `free()` or an untracked
 Rust deallocator. The `cimpl_free!` macro does not export a C ABI symbol either.
 
+For byte returns, `to_c_bytes` transfers even-addressed `Vec<u8>` allocations
+without copying or shrinking. The registry retains the original pointer,
+length, and capacity for release. Its cleanup closure reconstructs the vector
+only when invoked; cancellation must not free the allocation merely by dropping
+the closure. Odd-addressed allocations must still be
+copied into an even-addressed buffer before tracking; check parity first so a
+successful fallback does not leave a tracking-refusal error. Returned bytes are
+read-only to C callers. Do not reconstruct transferred vectors with the copied
+buffer's alignment or add a spare-capacity copy threshold.
+
 ### Keep Panics Out of the C ABI
 
 Do not use `panic!()`, `unwrap()`, or `expect()` for recoverable failures in
