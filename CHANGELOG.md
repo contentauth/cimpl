@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `to_c_bytes` transfers even-addressed `Vec<u8>` allocations without copying
+  or shrinking, retaining the original length and capacity until the allocating
+  library's free function is called. Odd-addressed vectors retain the existing
+  even-buffer copy fallback. C signatures and release conventions are unchanged.
+
 ## [0.4.0]
 _14 September 2026_
 
