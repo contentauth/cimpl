@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/contentauth/cimpl/compare/v0.4.1...v0.4.2)
+_02 November 2026_
+
+### Added
+
+* Transfer byte vector allocations without copying
+
+### Documented
+
+* Update ai instructions and documentation ([#14](https://github.com/contentauth/cimpl/pull/14))
+
 ### Changed
 
 - `to_c_bytes` transfers even-addressed `Vec<u8>` allocations without copying
