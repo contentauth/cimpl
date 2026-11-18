@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3](https://github.com/contentauth/cimpl/compare/v0.4.2...v0.4.3)
+_18 November 2026_
+
+### Fixed
+
+* No-op change to trigger new build ([#29](https://github.com/contentauth/cimpl/pull/29))
+
+### Other
+
+* Ios simulator build fix
+* Update from retired macos-runner 14 to 15
+* Change to trusted publishing
+* Modernize CI workflows ([#19](https://github.com/contentauth/cimpl/pull/19))
+* Pin cross to revision with rustup detection fix
+* Merge main and resolve CI workflow conflicts
+* Modernize CI workflows
+
 ## [0.4.2](https://github.com/contentauth/cimpl/compare/v0.4.1...v0.4.2)
 _02 November 2026_
 
