@@ -73,7 +73,7 @@
 //! pub enum Error {
 //!     #[error("value out of range: {0}")]
 //!     OutOfRange(String),
-//!     
+//!
 //!     #[error("invalid UTF-8: {0}")]
 //!     InvalidUtf8(String),
 //! }
@@ -227,8 +227,8 @@ pub mod utils;
 #[macro_use]
 pub mod macros;
 
-// Re-export main types and functions for convenience
-// Convenience alias to avoid name conflicts
+// Re-export main types and functions for convenience.
+// Convenience alias to avoid name conflicts.
 pub use error::{Error as CimplError, Error, Result};
 pub use utils::{
     checkout_exclusive, checkout_shared, cimpl_free, ensure_trackable, is_safe_buffer_size,
