@@ -220,7 +220,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout repository
@@ -236,7 +236,10 @@ jobs:
         run: |
           VERSION=0.8.6
           URL="https://github.com/sonos/dinghy/releases/download/${VERSION}/cargo-dinghy-macos-${VERSION}.tgz"
-          wget -O - "$URL" | tar -xz --strip-components=1 -C ~/.cargo/bin
+          BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$BIN_DIR"
+          wget -O - "$URL" | tar -xz --strip-components=1 -C "$BIN_DIR"
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
 
       - name: Check cargo-dinghy version.
         run: cargo dinghy --version
@@ -268,7 +271,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
-    runs-on: macos-14
+    runs-on: macos-15
 
     strategy:
       fail-fast: false
