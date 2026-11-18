@@ -357,7 +357,14 @@ jobs:
 
       - name: Install wasmtime
         run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
+          # install.sh exits 0 even when its latest-version lookup fails, so check for the binary.
+          for attempt in 1 2 3; do
+            curl -sSf --retry 5 https://wasmtime.dev/install.sh | bash || true
+            [ -x "$HOME/.wasmtime/bin/wasmtime" ] && break
+            echo "wasmtime install attempt $attempt failed; retrying"
+            sleep $((attempt * 10))
+          done
+          "$HOME/.wasmtime/bin/wasmtime" --version
           echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
 
       - name: Install clang
